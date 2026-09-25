@@ -195,3 +195,67 @@ test('cofounder execution gate executes only an active approval and records the 
   assert.equal(state.executions[0].status, 'INTERNAL_ACTION_RECORDED');
   assert.equal(state.executions[0].executedBy, 'JARVIS');
 });
+
+test('cofounder blocks a lesson until the decision outcome is recorded', () => {
+  const { result, state } = runIsolatedJarvis(
+    prospectFixture(),
+    'record decision complete qualification before contracting\ndecision lesson 1 qualify before contract\n'
+  );
+
+  assert.equal(result.error?.code, 'ETIMEDOUT');
+  assert.match(result.stdout ?? '', /JARVIS DECISION LESSON BLOCKED/);
+  assert.equal(state.decisions.length, 1);
+  assert.equal(state.decisions[0].lesson, undefined);
+  assert.equal(state.lessons.length, 0);
+});
+
+test('cofounder records an outcome before allowing the linked decision lesson', () => {
+  const { result, state } = runIsolatedJarvis(
+    prospectFixture(),
+    'record decision complete qualification before contracting\ndecision outcome 1 Prospect confirmed the problem and agreed to provide missing evidence\ndecision lesson 1 Qualify before contract when discovery evidence is incomplete\n'
+  );
+
+  assert.equal(result.error?.code, 'ETIMEDOUT');
+  assert.match(result.stdout ?? '', /JARVIS DECISION OUTCOME RECORDED/);
+  assert.match(result.stdout ?? '', /JARVIS DECISION LESSON RECORDED/);
+  assert.equal(state.decisions[0].outcome, 'Prospect confirmed the problem and agreed to provide missing evidence');
+  assert.equal(state.decisions[0].lesson, 'Qualify before contract when discovery evidence is incomplete');
+  assert.equal(state.lessons.length, 1);
+  assert.equal(state.lessons[0].source, 'decision 1');
+});
+
+test('cofounder carries a recorded lesson into a future recommendation', () => {
+  const { result } = runIsolatedJarvis(
+    {
+      ...prospectFixture({
+        problem: 'Manual customer follow-up is consuming staff time'
+      }),
+      prospects: [
+        {
+          name: 'Test prospect',
+          details: 'Test business',
+          status: 'NEW',
+          discovery: {
+            problem: 'Manual customer follow-up is consuming staff time'
+          },
+          qualification: {
+            status: 'NEEDS MORE DISCOVERY',
+            missing: ['impact', 'current solution', 'desired outcome', 'decision maker']
+          }
+        }
+      ],
+      followUps: [
+        {
+          text: 'Send contract to prospect',
+          status: 'OPEN'
+        }
+      ]
+    },
+    'record decision complete qualification before contracting\ndecision outcome 1 Qualification gap confirmed\ndecision lesson 1 Qualify before contract when discovery evidence is incomplete\nrecommend\n'
+  );
+
+  assert.equal(result.error?.code, 'ETIMEDOUT');
+  assert.match(result.stdout ?? '', /JARVIS DECISION LESSON RECORDED/);
+  assert.match(result.stdout ?? '', /Focus first on: complete prospect qualification before contracting/);
+  assert.match(result.stdout ?? '', /LEARNING SIGNAL: A past decision lesson indicates qualification should happen before contracting/);
+});
