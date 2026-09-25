@@ -1409,6 +1409,16 @@ function handleCommand(input) {
         }
 
         const decision = decisions[number - 1];
+
+        if (!decision.outcome) {
+            console.log("");
+            console.log("JARVIS DECISION LESSON BLOCKED");
+            console.log("-------------------------------");
+            console.log("Record the decision outcome before recording a lesson.");
+            console.log("Use: decision outcome <number> <what happened>");
+            return true;
+        }
+
         if (!Array.isArray(state.lessons)) state.lessons = [];
 
         const lesson = {
