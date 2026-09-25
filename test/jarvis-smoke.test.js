@@ -168,6 +168,43 @@ test('cofounder challenge flags an open follow-up when qualification is incomple
   assert.match(result.stdout ?? '', /The current follow-up may be premature because prospect qualification is incomplete/);
 });
 
+test('cofounder blocks an unlinked approval when an active decision exists', () => {
+  const { result, state } = runIsolatedJarvis(
+    prospectFixture(),
+    'record decision complete qualification before contracting\\napprove recommendation complete prospect qualification before contracting\\n'
+  );
+
+  assert.equal(result.error?.code, 'ETIMEDOUT');
+  assert.match(result.stdout ?? '', /JARVIS APPROVAL BLOCKED/);
+  assert.equal(state.approvals.length, 0);
+});
+
+test('cofounder links an approval to the active decision it authorizes', () => {
+  const { result, state } = runIsolatedJarvis(
+    prospectFixture(),
+    'record decision complete qualification before contracting\\napprove recommendation complete prospect qualification before contracting for decision 1\\n'
+  );
+
+  assert.equal(result.error?.code, 'ETIMEDOUT');
+  assert.match(result.stdout ?? '', /JARVIS RECOMMENDATION APPROVED/);
+  assert.equal(state.approvals[0].decisionNumber, 1);
+  assert.equal(state.approvals[0].decisionId, 'decision-1');
+});
+
+test('cofounder blocks execution when the linked decision has been closed', () => {
+  const { result, state } = runIsolatedJarvis(
+    prospectFixture(),
+    'record decision complete qualification before contracting\\napprove recommendation complete prospect qualification before contracting for decision 1\\nclose decision 1\\nexecute approved 1\\n'
+  );
+
+  assert.equal(result.error?.code, 'ETIMEDOUT');
+  assert.match(result.stdout ?? '', /Linked active approvals marked STALE/);
+  assert.match(result.stdout ?? '', /JARVIS EXECUTION BLOCKED/);
+  assert.equal(state.decisions[0].status, 'CLOSED');
+  assert.equal(state.approvals[0].status, 'STALE');
+  assert.equal(state.executions.length, 0);
+});
+
 test('cofounder approval records an active approval without executing it', () => {
   const { result, state } = runIsolatedJarvis(
     prospectFixture(),
@@ -270,6 +307,8 @@ test('cofounder records an outcome before allowing the linked decision lesson', 
   assert.equal(state.decisions[0].lesson, 'Qualify before contract when discovery evidence is incomplete');
   assert.equal(state.lessons.length, 1);
   assert.equal(state.lessons[0].source, 'decision 1');
+  assert.equal(state.lessons[0].decisionId, 'decision-1');
+  assert.equal(state.decisions[0].lessonId, 'lesson-1');
 });
 
 test('cofounder carries a recorded lesson into a future recommendation', () => {
