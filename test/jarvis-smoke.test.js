@@ -8,7 +8,7 @@ const path = require('node:path');
 const repoRoot = path.join(__dirname, '..');
 const indexFile = path.join(repoRoot, 'index.js');
 
-function runIsolatedJarvis(business, input) {
+function runIsolatedJarvis(business, input, state = {}) {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'jarvis-test-'));
 
   try {
@@ -16,6 +16,17 @@ function runIsolatedJarvis(business, input) {
     fs.writeFileSync(
       path.join(tempDir, 'business.json'),
       JSON.stringify(business, null, 2)
+    );
+    fs.writeFileSync(
+      path.join(tempDir, 'cofounder-state.json'),
+      JSON.stringify({
+        goals: [],
+        decisions: [],
+        approvals: [],
+        executions: [],
+        lessons: [],
+        ...state
+      }, null, 2)
     );
 
     const result = spawnSync(process.execPath, ['index.js'], {
@@ -29,6 +40,9 @@ function runIsolatedJarvis(business, input) {
       result,
       business: JSON.parse(
         fs.readFileSync(path.join(tempDir, 'business.json'), 'utf8')
+      ),
+      state: JSON.parse(
+        fs.readFileSync(path.join(tempDir, 'cofounder-state.json'), 'utf8')
       )
     };
   } finally {
@@ -133,4 +147,51 @@ test('prospect qualification marks a prospect qualified only with all core evide
   assert.match(result.stdout ?? '', /QUALIFICATION: QUALIFIED/);
   assert.deepEqual(business.prospects[0].qualification.missing, []);
   assert.equal(business.prospects[0].qualification.status, 'QUALIFIED');
+});
+test('cofounder challenge flags an open follow-up when qualification is incomplete', () => {
+  const { result } = runIsolatedJarvis(
+    {
+      ...prospectFixture({
+        problem: 'Manual customer follow-up is consuming staff time'
+      }),
+      followUps: [
+        {
+          text: 'Send contract to prospect',
+          status: 'OPEN'
+        }
+      ]
+    },
+    'prospect qualification\nchallenge\n'
+  );
+  assert.equal(result.error?.code, 'ETIMEDOUT');
+  assert.match(result.stdout ?? '', /JARVIS COFOUNDER CHALLENGE/);
+  assert.match(result.stdout ?? '', /The current follow-up may be premature because prospect qualification is incomplete/);
+});
+
+test('cofounder approval records an active approval without executing it', () => {
+  const { result, state } = runIsolatedJarvis(
+    prospectFixture(),
+    'approve recommendation complete prospect qualification before contracting\n'
+  );
+
+  assert.equal(result.error?.code, 'ETIMEDOUT');
+  assert.match(result.stdout ?? '', /JARVIS RECOMMENDATION APPROVED/);
+  assert.equal(state.approvals.length, 1);
+  assert.equal(state.approvals[0].status, 'ACTIVE');
+  assert.equal(state.approvals[0].approvedBy, 'Zayn');
+  assert.equal(state.executions.length, 0);
+});
+
+test('cofounder execution gate executes only an active approval and records the execution', () => {
+  const { result, state } = runIsolatedJarvis(
+    prospectFixture(),
+    'approve recommendation complete prospect qualification before contracting\nexecute approved 1\n'
+  );
+
+  assert.equal(result.error?.code, 'ETIMEDOUT');
+  assert.match(result.stdout ?? '', /JARVIS EXECUTION RECORDED/);
+  assert.equal(state.approvals[0].status, 'EXECUTED');
+  assert.equal(state.executions.length, 1);
+  assert.equal(state.executions[0].status, 'INTERNAL_ACTION_RECORDED');
+  assert.equal(state.executions[0].executedBy, 'JARVIS');
 });
