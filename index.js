@@ -1209,9 +1209,7 @@ function handleCommand(input) {
             reason: "Recorded by Zayn",
             evidence: [],
             date: new Date().toISOString(),
-            status: "ACTIVE",
-            decisionNumber: decisionNumber,
-            decisionId: linkedDecision ? (linkedDecision.id || ("decision-" + decisionNumber)) : null
+            status: "ACTIVE"
         };
 
         state.decisions.push(record);
@@ -1516,7 +1514,9 @@ function handleCommand(input) {
             action: approvalText,
             approvedBy: "Zayn",
             date: new Date().toISOString(),
-            status: "ACTIVE"
+            status: "ACTIVE",
+            decisionNumber: decisionNumber,
+            decisionId: linkedDecision ? (linkedDecision.id || ("decision-" + decisionNumber)) : null
         };
 
         state.approvals.push(approval);
