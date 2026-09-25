@@ -196,6 +196,45 @@ test('cofounder execution gate executes only an active approval and records the 
   assert.equal(state.executions[0].executedBy, 'JARVIS');
 });
 
+test('cofounder blocks execution when an approval has already been executed', () => {
+  const { result, state } = runIsolatedJarvis(
+    prospectFixture(),
+    'approve recommendation complete prospect qualification before contracting\nexecute approved 1\nexecute approved 1\n'
+  );
+
+  assert.equal(result.error?.code, 'ETIMEDOUT');
+  assert.match(result.stdout ?? '', /JARVIS EXECUTION RECORDED/);
+  assert.match(result.stdout ?? '', /JARVIS EXECUTION BLOCKED/);
+  assert.equal(state.approvals[0].status, 'EXECUTED');
+  assert.equal(state.executions.length, 1);
+});
+
+test('cofounder lets newer qualification evidence supersede an older qualification lesson', () => {
+  const { result } = runIsolatedJarvis(
+    {
+      ...prospectFixture({
+        problem: 'Manual customer follow-up is consuming staff time',
+        impact: 'Staff spend hours each week chasing responses',
+        currentSolution: 'Staff use spreadsheets and manual messages',
+        desiredOutcome: 'Automate routine follow-up and tracking',
+        decisionMaker: 'Operations manager'
+      }),
+      followUps: [
+        {
+          text: 'Send contract to prospect',
+          status: 'OPEN'
+        }
+      ]
+    },
+    'record decision qualify before contracting\ndecision outcome 1 Qualification gap confirmed\ndecision lesson 1 Qualify before contract when discovery evidence is incomplete\nprospect qualification\nrecommend\n'
+  );
+
+  assert.equal(result.error?.code, 'ETIMEDOUT');
+  assert.match(result.stdout ?? '', /QUALIFICATION: QUALIFIED/);
+  assert.match(result.stdout ?? '', /Focus first on: Send contract to prospect/);
+  assert.doesNotMatch(result.stdout ?? '', /LEARNING SIGNAL: A past decision lesson indicates qualification should happen before contracting/);
+});
+
 test('cofounder blocks a lesson until the decision outcome is recorded', () => {
   const { result, state } = runIsolatedJarvis(
     prospectFixture(),
