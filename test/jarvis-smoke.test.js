@@ -226,7 +226,16 @@ test('cofounder lets newer qualification evidence supersede an older qualificati
         }
       ]
     },
-    'record decision qualify before contracting\ndecision outcome 1 Qualification gap confirmed\ndecision lesson 1 Qualify before contract when discovery evidence is incomplete\nprospect qualification\nrecommend\n'
+    'prospect qualification\nrecommend\n',
+    {
+      lessons: [
+        {
+          date: '2026-09-24T10:00:00.000Z',
+          source: 'decision 1',
+          text: 'Qualify before contract when discovery evidence is incomplete'
+        }
+      ]
+    }
   );
 
   assert.equal(result.error?.code, 'ETIMEDOUT');
