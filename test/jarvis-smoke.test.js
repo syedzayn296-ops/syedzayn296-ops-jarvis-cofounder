@@ -171,7 +171,7 @@ test('cofounder challenge flags an open follow-up when qualification is incomple
 test('cofounder blocks an unlinked approval when an active decision exists', () => {
   const { result, state } = runIsolatedJarvis(
     prospectFixture(),
-    'record decision complete qualification before contracting\\napprove recommendation complete prospect qualification before contracting\\n'
+    'record decision complete qualification before contracting\napprove recommendation complete prospect qualification before contracting\n'
   );
 
   assert.equal(result.error?.code, 'ETIMEDOUT');
@@ -182,7 +182,7 @@ test('cofounder blocks an unlinked approval when an active decision exists', () 
 test('cofounder links an approval to the active decision it authorizes', () => {
   const { result, state } = runIsolatedJarvis(
     prospectFixture(),
-    'record decision complete qualification before contracting\\napprove recommendation complete prospect qualification before contracting for decision 1\\n'
+    'record decision complete qualification before contracting\napprove recommendation complete prospect qualification before contracting for decision 1\n'
   );
 
   assert.equal(result.error?.code, 'ETIMEDOUT');
@@ -194,7 +194,7 @@ test('cofounder links an approval to the active decision it authorizes', () => {
 test('cofounder blocks execution when the linked decision has been closed', () => {
   const { result, state } = runIsolatedJarvis(
     prospectFixture(),
-    'record decision complete qualification before contracting\\napprove recommendation complete prospect qualification before contracting for decision 1\\nclose decision 1\\nexecute approved 1\\n'
+    'record decision complete qualification before contracting\napprove recommendation complete prospect qualification before contracting for decision 1\nclose decision 1\nexecute approved 1\n'
   );
 
   assert.equal(result.error?.code, 'ETIMEDOUT');
