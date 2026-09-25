@@ -1707,7 +1707,7 @@ function handleCommand(input) {
                 return text.includes("qualify") && text.includes("contract");
             });
 
-            if (qualificationLesson && openFollowUps.length > 0) {
+            if (qualificationLesson && incomplete.length > 0 && openFollowUps.length > 0) {
                 const currentAction = openFollowUps[0].text.toLowerCase();
 
                 if (currentAction.includes("contract") || currentAction.includes("contracting")) {
