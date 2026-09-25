@@ -1204,11 +1204,14 @@ function handleCommand(input) {
         if (!Array.isArray(state.decisions)) state.decisions = [];
 
         const record = {
+            id: "decision-" + (state.decisions.length + 1),
             decision: decisionText,
             reason: "Recorded by Zayn",
             evidence: [],
             date: new Date().toISOString(),
-            status: "ACTIVE"
+            status: "ACTIVE",
+            decisionNumber: decisionNumber,
+            decisionId: linkedDecision ? (linkedDecision.id || ("decision-" + decisionNumber)) : null
         };
 
         state.decisions.push(record);
@@ -1285,6 +1288,15 @@ function handleCommand(input) {
         decision.closedDate = new Date().toISOString();
         decision.closedBy = "Zayn";
 
+        const linkedApprovals = Array.isArray(state.approvals)
+            ? state.approvals.filter(a => a.status === "ACTIVE" && a.decisionNumber === number)
+            : [];
+        linkedApprovals.forEach(a => {
+            a.status = "STALE";
+            a.staleDate = decision.closedDate;
+            a.staleReason = "Linked decision was closed.";
+        });
+
         fs.writeFileSync(stateFile, JSON.stringify(state, null, 2), "utf8");
 
         console.log("");
@@ -1293,6 +1305,9 @@ function handleCommand(input) {
         console.log("Decision: " + decisionText);
         console.log("Status: CLOSED");
         console.log("Closed by: Zayn");
+        if (linkedApprovals.length > 0) {
+            console.log("Linked active approvals marked STALE.");
+        }
         console.log("The decision remains in history but is no longer an active constraint.");
 
         return true;
@@ -1379,6 +1394,7 @@ function handleCommand(input) {
         const decision = decisions[number - 1];
         decision.outcome = outcomeText;
         decision.outcomeDate = new Date().toISOString();
+        decision.outcomeDecisionId = decision.id || ("decision-" + number);
 
         fs.writeFileSync(stateFile, JSON.stringify(state, null, 2), "utf8");
 
@@ -1422,13 +1438,16 @@ function handleCommand(input) {
         if (!Array.isArray(state.lessons)) state.lessons = [];
 
         const lesson = {
+            id: "lesson-" + (state.lessons.length + 1),
             date: new Date().toISOString(),
             source: "decision " + number,
+            decisionId: decision.id || ("decision-" + number),
             text: lessonText
         };
 
         state.lessons.push(lesson);
         decision.lesson = lessonText;
+        decision.lessonId = lesson.id;
 
         fs.writeFileSync(stateFile, JSON.stringify(state, null, 2), "utf8");
 
@@ -1443,9 +1462,15 @@ function handleCommand(input) {
     }
 
     if (lower.startsWith("approve recommendation ")) {
-        const approvalText = trimmed.slice("approve recommendation ".length).trim();
+        const rawApproval = trimmed.slice("approve recommendation ".length).trim();
         const stateFile = "cofounder-state.json";
         const state = JSON.parse(fs.readFileSync(stateFile, "utf8"));
+        const decisions = Array.isArray(state.decisions) ? state.decisions : [];
+        const decisionMatch = rawApproval.match(/\s+for decision\s+(\d+)$/i);
+        const approvalText = decisionMatch
+            ? rawApproval.slice(0, decisionMatch.index).trim()
+            : rawApproval;
+        const decisionNumber = decisionMatch ? parseInt(decisionMatch[1], 10) : null;
 
         if (!approvalText) {
             console.log("");
@@ -1457,6 +1482,35 @@ function handleCommand(input) {
         }
 
         if (!Array.isArray(state.approvals)) state.approvals = [];
+
+        if (decisions.some(d => d.status === "ACTIVE") && decisionNumber === null) {
+            console.log("");
+            console.log("JARVIS APPROVAL BLOCKED");
+            console.log("------------------------");
+            console.log("An active decision exists. Link the approval to that decision.");
+            console.log("Use: approve recommendation <action> for decision <number>");
+            return true;
+        }
+
+        let linkedDecision = null;
+        if (decisionNumber !== null) {
+            if (!Number.isInteger(decisionNumber) || decisionNumber < 1 || decisionNumber > decisions.length) {
+                console.log("");
+                console.log("JARVIS APPROVAL BLOCKED");
+                console.log("------------------------");
+                console.log("Invalid decision number.");
+                return true;
+            }
+
+            linkedDecision = decisions[decisionNumber - 1];
+            if (linkedDecision.status !== "ACTIVE") {
+                console.log("");
+                console.log("JARVIS APPROVAL BLOCKED");
+                console.log("------------------------");
+                console.log("The linked decision is not active.");
+                return true;
+            }
+        }
 
         const approval = {
             action: approvalText,
@@ -1504,6 +1558,17 @@ function handleCommand(input) {
             console.log("--------------------------");
             console.log("This approval is not active.");
             return true;
+        }
+
+        if (approval.decisionNumber) {
+            const linkedDecision = state.decisions?.[approval.decisionNumber - 1];
+            if (!linkedDecision || linkedDecision.status !== "ACTIVE") {
+                console.log("");
+                console.log("JARVIS EXECUTION BLOCKED");
+                console.log("--------------------------");
+                console.log("The approval's linked decision is no longer active.");
+                return true;
+            }
         }
 
         if (!Array.isArray(state.executions)) state.executions = [];
