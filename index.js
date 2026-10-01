@@ -2512,7 +2512,42 @@ console.log("");console.log("COMMERCIAL READ");
         }
 
         console.log("");
-        console.log("COMMERCIAL RULE");
+        console.log("");
+console.log("COMMERCIAL NEXT ACTION");
+console.log("----------------------");
+
+let commercialNextAction = "";
+
+if (openProspects.length > 0) {
+    const active = openProspects[0];
+    const d = active.discovery || {};
+    const q = active.qualification || {};
+
+    if (!d.problem) {
+        commercialNextAction = "Capture the prospect's confirmed business problem.";
+    } else if (!d.impact) {
+        commercialNextAction = "Ask how the problem affects time, cost, revenue, customers or staff capacity.";
+    } else if (!d.desiredOutcome) {
+        commercialNextAction = "Ask what measurable outcome the prospect wants instead.";
+    } else if (!d.decisionMaker) {
+        commercialNextAction = "Confirm who makes or approves the buying decision.";
+    } else if (!d.budget) {
+        commercialNextAction = "Confirm whether a budget or spending range exists for solving the problem.";
+    } else if (!d.timeline) {
+        commercialNextAction = "Confirm when the prospect wants the problem solved.";
+    } else if (q.status !== "QUALIFIED") {
+        commercialNextAction = "Run prospect qualification using the completed discovery evidence.";
+    } else {
+        commercialNextAction = "Review the matching Zayzana offer and prepare commercial terms for Zayn's approval.";
+    }
+} else if (openOpportunities.length > 0) {
+    commercialNextAction = "Review the open opportunity and identify the next buyer-facing action.";
+} else {
+    commercialNextAction = "Identify and record the next real commercial prospect.";
+}
+
+console.log(commercialNextAction);
+console.log("");console.log("COMMERCIAL RULE");
         console.log("---------------");
         console.log("Sell against a confirmed business problem, measurable impact and desired outcome.");
         console.log("Do not invent budget, urgency, authority or buying intent.");
@@ -2551,4 +2586,5 @@ const commercialOffers = [
         outcome: "Create a simple digital workflow around a real business need"
     }
 ];
+
 
