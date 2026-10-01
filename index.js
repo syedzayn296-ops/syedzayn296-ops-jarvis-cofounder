@@ -2464,7 +2464,25 @@ const commercialBrain = {
             }
 
             console.log("");
-            console.log("COMMERCIAL READ");
+            console.log("");
+console.log("POTENTIAL ZAYZANA OFFER FIT");
+console.log("--------------------------");
+
+const problemText = (discovery.problem || "").toLowerCase();
+const matchingOffers = commercialOffers.filter(offer =>
+    offer.solves.some(term => problemText.includes(term.toLowerCase()))
+);
+
+if (matchingOffers.length === 0) {
+    console.log("No direct offer match identified from the recorded problem.");
+    console.log("Do not force an offer. Continue discovery.");
+} else {
+    matchingOffers.forEach((offer, index) => {
+        console.log((index + 1) + ". " + offer.name);
+        console.log("   Potential outcome: " + offer.outcome);
+    });
+}
+console.log("");console.log("COMMERCIAL READ");
             console.log("---------------");
 
             if (qualification.status !== "QUALIFIED") {
@@ -2505,4 +2523,32 @@ const commercialBrain = {
 
 
 
+
+const commercialOffers = [
+    {
+        name: "AI Automation",
+        solves: ["manual customer enquiries", "repetitive admin", "manual workflows"],
+        outcome: "Reduce repetitive staff work and improve response speed"
+    },
+    {
+        name: "Business Process Automation",
+        solves: ["manual processes", "repetitive tasks", "workflow bottlenecks"],
+        outcome: "Make recurring business processes faster and more consistent"
+    },
+    {
+        name: "Customer Support Tool",
+        solves: ["customer enquiries", "slow responses", "support workload"],
+        outcome: "Improve customer response handling and reduce staff workload"
+    },
+    {
+        name: "Internal Business Tool",
+        solves: ["spreadsheet-heavy work", "manual tracking", "information scattered across systems"],
+        outcome: "Centralise business information and reduce manual administration"
+    },
+    {
+        name: "Website / Lightweight Software",
+        solves: ["poor online workflow", "manual customer intake", "lack of digital self-service"],
+        outcome: "Create a simple digital workflow around a real business need"
+    }
+];
 
