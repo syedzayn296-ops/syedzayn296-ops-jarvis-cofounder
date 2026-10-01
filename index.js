@@ -2547,6 +2547,34 @@ if (openProspects.length > 0) {
 }
 
 console.log(commercialNextAction);
+console.log("");console.log("");
+console.log("DISCOVERY QUESTION");
+console.log("------------------");
+
+let discoveryQuestion = "";
+
+if (openProspects.length > 0) {
+    const active = openProspects[0];
+    const d = active.discovery || {};
+
+    if (!d.problem) {
+        discoveryQuestion = "What specific business problem are you trying to solve?";
+    } else if (!d.impact) {
+        discoveryQuestion = "You mentioned that " + d.problem + ". Roughly how much time, cost, customer impact or staff capacity does this issue affect?";
+    } else if (!d.desiredOutcome) {
+        discoveryQuestion = "If we solved that problem, what specific result would you want to see instead?";
+    } else if (!d.decisionMaker) {
+        discoveryQuestion = "Who would normally be involved in approving or deciding on a solution to this problem?";
+    } else if (!d.budget) {
+        discoveryQuestion = "Has the business already set aside a budget or spending range for solving this problem?";
+    } else if (!d.timeline) {
+        discoveryQuestion = "When would you ideally want this problem solved or the new process in place?";
+    } else {
+        discoveryQuestion = "What would make you confident that the proposed solution has delivered the result you want?";
+    }
+}
+
+console.log(discoveryQuestion || "No active prospect requires a discovery question.");
 console.log("");console.log("COMMERCIAL RULE");
         console.log("---------------");
         console.log("Sell against a confirmed business problem, measurable impact and desired outcome.");
@@ -2586,5 +2614,6 @@ const commercialOffers = [
         outcome: "Create a simple digital workflow around a real business need"
     }
 ];
+
 
 
