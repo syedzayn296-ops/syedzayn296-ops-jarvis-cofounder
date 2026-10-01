@@ -1,4 +1,4 @@
-﻿const fs = require("fs");
+const fs = require("fs");
 const readline = require("readline");
 const { exec } = require("child_process");
 
@@ -142,7 +142,7 @@ function addReminder(message, time) {
     saveJson(remindersFile, reminders);
 
     console.log(
-        `JARVIS > Reminder saved: ${message} â€” ${new Date(time).toLocaleString()}`
+        `JARVIS > Reminder saved: ${message} — ${new Date(time).toLocaleString()}`
     );
 }
 
@@ -160,7 +160,7 @@ function showReminders() {
         const status = reminder.fired ? "FIRED" : "OPEN";
 
         console.log(
-            `${index + 1}. [${status}] ${reminder.message} â€” ${new Date(
+            `${index + 1}. [${status}] ${reminder.message} — ${new Date(
                 reminderTime
             ).toLocaleString()}`
         );
@@ -173,7 +173,7 @@ function checkReminders() {
 
         if (!reminder.fired && reminderTime && Date.now() >= reminderTime) {
             console.log(
-                `\nðŸ”” JARVIS REMINDER: ${reminder.message}\n`
+                `\n🔔 JARVIS REMINDER: ${reminder.message}\n`
             );
 
             reminder.fired = true;
@@ -454,7 +454,7 @@ function addRevenue(amount, description) {
     saveJson(businessFile, business);
 
     console.log(
-        `JARVIS > Revenue recorded: ${numericAmount} â€” ${
+        `JARVIS > Revenue recorded: ${numericAmount} — ${
             description || "No description"
         }`
     );
@@ -475,7 +475,7 @@ function showRevenue() {
         total += Number(item.amount) || 0;
 
         console.log(
-            `${index + 1}. ${item.amount} â€” ${
+            `${index + 1}. ${item.amount} — ${
                 item.description || "No description"
             }`
         );
@@ -485,7 +485,7 @@ function showRevenue() {
 }
 
 // --------------------------------------------------
-// STEP 15 â€” ACTION BRAIN
+// STEP 15 — ACTION BRAIN
 // --------------------------------------------------
 
 function showActionBrain() {
@@ -596,7 +596,7 @@ function showBusinessPriorities() {
 }
 
 // --------------------------------------------------
-// STEP 16 â€” ZAYZANA OPERATING BRAIN
+// STEP 16 — ZAYZANA OPERATING BRAIN
 // --------------------------------------------------
 
 function showOperatingBrain() {
@@ -737,7 +737,7 @@ function showOperatingBrain() {
 }
 
 // --------------------------------------------------
-// STEP 17 â€” OPPORTUNITY ACTION BRAIN
+// STEP 17 — OPPORTUNITY ACTION BRAIN
 // --------------------------------------------------
 
 function showOpportunityAction() {
@@ -868,21 +868,21 @@ function showZayzanaFocus() {
 
     if (openFollowUps.length > 0) {
         console.log(
-            `CURRENT FOCUS: Follow-up â€” ${openFollowUps[0].text}`
+            `CURRENT FOCUS: Follow-up — ${openFollowUps[0].text}`
         );
         return;
     }
 
     if (openProspects.length > 0) {
         console.log(
-            `CURRENT FOCUS: Prospect â€” ${openProspects[0].name}`
+            `CURRENT FOCUS: Prospect — ${openProspects[0].name}`
         );
         return;
     }
 
     if (openOpportunities.length > 0) {
         console.log(
-            `CURRENT FOCUS: Opportunity â€” ${openOpportunities[0].text}`
+            `CURRENT FOCUS: Opportunity — ${openOpportunities[0].text}`
         );
         return;
     }
@@ -893,7 +893,7 @@ function showZayzanaFocus() {
 }
 
 // --------------------------------------------------
-// STEP 18 â€” PROSPECT INTELLIGENCE
+// STEP 18 — PROSPECT INTELLIGENCE
 // --------------------------------------------------
 
 function showProspectIntelligence() {
@@ -948,7 +948,7 @@ function showProspectIntelligence() {
         );
     } else {
         console.log(
-            "INSUFFICIENT INFORMATION â€” do not assume the prospect's problem."
+            "INSUFFICIENT INFORMATION — do not assume the prospect's problem."
         );
     }
 
@@ -976,7 +976,7 @@ function showProspectIntelligence() {
 
 // --------------------------------------------------
  // --------------------------------------------------
- // STEP 19 â€” PROSPECT DISCOVERY
+ // STEP 19 — PROSPECT DISCOVERY
  // --------------------------------------------------
 
  function showProspectDiscovery() {
@@ -1161,7 +1161,7 @@ function decide(input) {
 
         if (projectKey) {
             console.log(
-                `Decision: WORK_ON â†’ ${projectKey}`
+                `Decision: WORK_ON → ${projectKey}`
             );
 
             console.log(
@@ -1796,7 +1796,9 @@ function handleCommand(input) {
         return true;
     }
 
-    // MEMORY
+    if (input === "commercial brain" || input === "commercial") { commercialBrain.analyze(); return; }
+
+  // MEMORY
     if (lower.startsWith("remember ")) {
         remember(trimmed.substring(9).trim());
         return true;
@@ -1920,7 +1922,7 @@ function handleCommand(input) {
         return true;
     }
 
-    // STEP 19 â€” PROSPECT DISCOVERY
+    // STEP 19 — PROSPECT DISCOVERY
     if (
         lower === "prospect discovery" ||
         lower === "prospect discovery brain" ||
@@ -1930,7 +1932,7 @@ function handleCommand(input) {
         showProspectDiscovery();
         return true;
     }
-    // STEP 19 â€” DISCOVERY CAPTURE
+    // STEP 19 — DISCOVERY CAPTURE
     if (lower.startsWith("discovery ")) {
         const parts = trimmed.split(" ");
         const field = parts[1];
@@ -2003,7 +2005,7 @@ function handleCommand(input) {
         console.log(`JARVIS > Discovery saved: ${fieldMap[field]}`);
         return true;
     }
-    // STEP 19 â€” PROSPECT QUALIFICATION
+    // STEP 19 — PROSPECT QUALIFICATION
     if (
         lower === "prospect qualification" ||
         lower === "qualify prospect" ||
@@ -2079,7 +2081,7 @@ function handleCommand(input) {
 
         return true;
     }
-    // STEP 19 â€” PROSPECT RECOMMENDATION
+    // STEP 19 — PROSPECT RECOMMENDATION
     if (
         lower === "prospect recommendation" ||
         lower === "recommend for prospect" ||
@@ -2134,11 +2136,11 @@ function handleCommand(input) {
 
             console.log("\nPOSSIBLE AREAS TO INVESTIGATE");
             console.log("-----------------------------");
-            console.log("â€¢ AI automation");
-            console.log("â€¢ Business process automation");
-            console.log("â€¢ Customer support tools");
-            console.log("â€¢ Internal tools");
-            console.log("â€¢ Website or lightweight software");
+            console.log("• AI automation");
+            console.log("• Business process automation");
+            console.log("• Customer support tools");
+            console.log("• Internal tools");
+            console.log("• Website or lightweight software");
 
             console.log("\nRECOMMENDATION");
             console.log("--------------");
@@ -2381,6 +2383,125 @@ rl.on("line", (line) => {
 }).on("close", () => {
     console.log("\nJARVIS > Session ended.");
 });
+
+
+
+
+const commercialBrain = {
+    analyze() {
+        const state = JSON.parse(fs.readFileSync("cofounder-state.json", "utf8"));
+        const business = JSON.parse(fs.readFileSync("business.json", "utf8"));
+
+        const prospects = business.prospects || [];
+        const opportunities = business.opportunities || [];
+        const followUps = business.followUps || [];
+
+        const openProspects = prospects.filter(p => p.status !== "CLOSED");
+        const openOpportunities = opportunities.filter(o => o.status === "OPEN");
+        const openFollowUps = followUps.filter(f => f.status === "OPEN");
+
+        console.log("");
+        console.log("JARVIS COMMERCIAL BRAIN");
+        console.log("=======================");
+
+        console.log("");
+        console.log("COMMERCIAL PIPELINE");
+        console.log("-------------------");
+        console.log("Open prospects: " + openProspects.length);
+        console.log("Open opportunities: " + openOpportunities.length);
+        console.log("Open follow-ups: " + openFollowUps.length);
+
+        if (openProspects.length === 0 && openOpportunities.length === 0) {
+            console.log("");
+            console.log("COMMERCIAL STATUS");
+            console.log("-----------------");
+            console.log("No active commercial opportunity is currently recorded.");
+            console.log("Next step: identify and record a real prospect or opportunity.");
+            return;
+        }
+
+        if (openProspects.length > 0) {
+            const prospect = openProspects[0];
+            const discovery = prospect.discovery || {};
+            const qualification = prospect.qualification || {};
+
+            console.log("");
+            console.log("ACTIVE PROSPECT");
+            console.log("---------------");
+            console.log("Name: " + (prospect.name || "Unknown"));
+            console.log("Qualification: " + (qualification.status || "NOT CHECKED"));
+
+            console.log("");
+            console.log("COMMERCIAL EVIDENCE");
+            console.log("-------------------");
+            console.log("Problem: " + (discovery.problem || "Not recorded"));
+            console.log("Impact: " + (discovery.impact || "Not recorded"));
+            console.log("Desired outcome: " + (discovery.desiredOutcome || "Not recorded"));
+            console.log("Decision maker: " + (discovery.decisionMaker || "Not recorded"));
+            console.log("Budget: " + (discovery.budget || "Not recorded"));
+            console.log("Timeline: " + (discovery.timeline || "Not recorded"));
+
+            console.log("");
+            console.log("COMMERCIAL GAPS");
+
+            const gaps = [];
+
+            if (!discovery.problem) gaps.push("business problem");
+            if (!discovery.impact) gaps.push("business impact");
+            if (!discovery.desiredOutcome) gaps.push("desired outcome");
+            if (!discovery.decisionMaker) gaps.push("decision maker");
+            if (!discovery.budget) gaps.push("budget");
+            if (!discovery.timeline) gaps.push("timeline");
+
+            if (gaps.length === 0) {
+                console.log("-----------------");
+                console.log("No major recorded commercial information gaps.");
+            } else {
+                console.log("-----------------");
+                gaps.forEach((gap, index) => {
+                    console.log((index + 1) + ". " + gap);
+                });
+            }
+
+            console.log("");
+            console.log("COMMERCIAL READ");
+            console.log("---------------");
+
+            if (qualification.status !== "QUALIFIED") {
+                console.log("Do not treat this prospect as sales-ready yet.");
+                console.log("Complete the missing discovery and qualification evidence.");
+            } else if (gaps.length > 0) {
+                console.log("Prospect is qualified, but commercial terms still need confirmation.");
+                console.log("Confirm budget and timeline before preparing a commercial proposal.");
+            } else {
+                console.log("Recorded evidence is sufficient for commercial review.");
+                console.log("Next question: what Zayzana offer directly addresses the confirmed problem and outcome?");
+            }
+        }
+
+        if (openOpportunities.length > 0) {
+            console.log("");
+            console.log("OPEN OPPORTUNITY");
+            console.log("----------------");
+            console.log(openOpportunities[0].text || "Opportunity recorded without description.");
+        }
+
+        if (openFollowUps.length > 0) {
+            console.log("");
+            console.log("CURRENT COMMERCIAL FOLLOW-UP");
+            console.log("-----------------------------");
+            console.log(openFollowUps[0].text || "Follow-up recorded without description.");
+        }
+
+        console.log("");
+        console.log("COMMERCIAL RULE");
+        console.log("---------------");
+        console.log("Sell against a confirmed business problem, measurable impact and desired outcome.");
+        console.log("Do not invent budget, urgency, authority or buying intent.");
+        console.log("Do not create a proposal or external action without Zayn's approval.");
+    }
+};
+
 
 
 
