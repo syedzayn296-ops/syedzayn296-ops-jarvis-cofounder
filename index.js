@@ -2004,11 +2004,35 @@ if (input === "run cycle" || input === "cycle") {
     console.log("STAGE: COMMERCIAL REVIEW");
     console.log("------------------------");
     console.log("Prospect is qualified.");
-    console.log("Next action: review offer fit and prepare commercial terms.");
-    console.log("Approval required before any external commercial action.");
     console.log("");
 
-    commercialBrain.analyze();
+    const recommendation = buildCommercialRecommendation(prospect, commercialOffers);
+
+    console.log("COMMERCIAL RECOMMENDATION");
+    console.log("-------------------------");
+    console.log("Primary offer: " + (recommendation.primaryOffer || "No match found"));
+    console.log("Expected outcome: " + (recommendation.primaryOutcome || "Not available"));
+    console.log("Evidence:");
+    console.log("- Problem: " + (d.problem || "Not recorded"));
+    console.log("- Impact: " + (d.impact || "Not recorded"));
+    console.log("- Desired outcome: " + (d.desiredOutcome || "Not recorded"));
+
+    if (recommendation.primaryEvidence.length > 0) {
+        console.log("Matched problem signals: " + recommendation.primaryEvidence.join(", "));
+    }
+
+    console.log("Alternative offer: " + (recommendation.alternativeOffer || "None identified"));
+
+    if (recommendation.unknowns.length > 0) {
+        console.log("Commercial unknowns: " + recommendation.unknowns.join(", "));
+    } else {
+        console.log("Commercial unknowns: none");
+    }
+
+    console.log("");
+    console.log("STATUS: READY FOR ZAYN APPROVAL");
+    console.log("External action: BLOCKED");
+    console.log("");
     return;
 }
 if (input === "commercial brain" || input === "commercial") { commercialBrain.analyze(); return; }
@@ -2814,6 +2838,44 @@ console.log("");console.log("COMMERCIAL RULE");
 
 
 
+function buildCommercialRecommendation(prospect, offers) {
+    const discovery = prospect.discovery || {};
+    const problemText = (discovery.problem || "").toLowerCase();
+
+    const matches = offers.map(offer => {
+        const matchedTerms = offer.solves.filter(term =>
+            problemText.includes(term.toLowerCase())
+        );
+
+        return {
+            offer,
+            matchedTerms,
+            matchCount: matchedTerms.length
+        };
+    })
+    .filter(item => item.matchCount > 0)
+    .sort((a, b) => b.matchCount - a.matchCount);
+
+    const primary = matches[0] || null;
+    const alternative = matches[1] || null;
+
+    const unknowns = [];
+
+    if (!discovery.budget) unknowns.push("budget");
+    if (!discovery.timeline) unknowns.push("timeline");
+
+    return {
+        prospect: prospect.name || "Unknown",
+        primaryOffer: primary ? primary.offer.name : null,
+        primaryOutcome: primary ? primary.offer.outcome : null,
+        primaryEvidence: primary ? primary.matchedTerms : [],
+        alternativeOffer: alternative ? alternative.offer.name : null,
+        alternativeOutcome: alternative ? alternative.offer.outcome : null,
+        unknowns,
+        approvalRequired: true,
+        externalActionAllowed: false
+    };
+}
 const commercialOffers = [
     {
         name: "AI Automation",
@@ -2841,6 +2903,8 @@ const commercialOffers = [
         outcome: "Create a simple digital workflow around a real business need"
     }
 ];
+
+
 
 
 
