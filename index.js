@@ -1823,21 +1823,27 @@ function handleCommand(input) {
     let label = "";
 
     if (!d.problem) {
+            active.currentDiscoveryField = "problem";
         field = "problem";
         label = "Problem";
     } else if (!d.impact) {
+            active.currentDiscoveryField = "impact";
         field = "impact";
         label = "Impact";
     } else if (!d.desiredOutcome) {
+            active.currentDiscoveryField = "desiredOutcome";
         field = "desiredOutcome";
         label = "Desired outcome";
     } else if (!d.decisionMaker) {
+            active.currentDiscoveryField = "decisionMaker";
         field = "decisionMaker";
         label = "Decision maker";
     } else if (!d.budget) {
+            active.currentDiscoveryField = "budget";
         field = "budget";
         label = "Budget";
     } else if (!d.timeline) {
+            active.currentDiscoveryField = "timeline";
         field = "timeline";
         label = "Timeline";
     }
@@ -1906,16 +1912,22 @@ if (input === "next discovery" || input === "discovery question") {
         const d = active.discovery || {};
 
         if (!d.problem) {
+            active.currentDiscoveryField = "problem";
             console.log("What specific business problem are you trying to solve?");
         } else if (!d.impact) {
+            active.currentDiscoveryField = "impact";
             console.log("Roughly how many staff hours per week are being spent handling these customer enquiries?");
         } else if (!d.desiredOutcome) {
+            active.currentDiscoveryField = "desiredOutcome";
             console.log("If we solved that problem, what specific result would you want to see instead?");
         } else if (!d.decisionMaker) {
+            active.currentDiscoveryField = "decisionMaker";
             console.log("Who would normally be involved in approving or deciding on a solution to this problem?");
         } else if (!d.budget) {
+            active.currentDiscoveryField = "budget";
             console.log("Has the business already set aside a budget or spending range for solving this problem?");
         } else if (!d.timeline) {
+            active.currentDiscoveryField = "timeline";
             console.log("When would you ideally want this problem solved or the new process in place?");
         } else {
             console.log("Discovery evidence is complete. Proceed to qualification and commercial review.");
@@ -2653,16 +2665,22 @@ if (openProspects.length > 0) {
     const q = active.qualification || {};
 
     if (!d.problem) {
+            active.currentDiscoveryField = "problem";
         commercialNextAction = "Capture the prospect's confirmed business problem.";
     } else if (!d.impact) {
+            active.currentDiscoveryField = "impact";
         commercialNextAction = "Ask how the problem affects time, cost, revenue, customers or staff capacity.";
     } else if (!d.desiredOutcome) {
+            active.currentDiscoveryField = "desiredOutcome";
         commercialNextAction = "Ask what measurable outcome the prospect wants instead.";
     } else if (!d.decisionMaker) {
+            active.currentDiscoveryField = "decisionMaker";
         commercialNextAction = "Confirm who makes or approves the buying decision.";
     } else if (!d.budget) {
+            active.currentDiscoveryField = "budget";
         commercialNextAction = "Confirm whether a budget or spending range exists for solving the problem.";
     } else if (!d.timeline) {
+            active.currentDiscoveryField = "timeline";
         commercialNextAction = "Confirm when the prospect wants the problem solved.";
     } else if (q.status !== "QUALIFIED") {
         commercialNextAction = "Run prospect qualification using the completed discovery evidence.";
@@ -2687,16 +2705,22 @@ if (openProspects.length > 0) {
     const d = active.discovery || {};
 
     if (!d.problem) {
+            active.currentDiscoveryField = "problem";
         discoveryQuestion = "What specific business problem are you trying to solve?";
     } else if (!d.impact) {
+            active.currentDiscoveryField = "impact";
         discoveryQuestion = "You mentioned that " + d.problem + ". Roughly how much time, cost, customer impact or staff capacity does this issue affect?";
     } else if (!d.desiredOutcome) {
+            active.currentDiscoveryField = "desiredOutcome";
         discoveryQuestion = "If we solved that problem, what specific result would you want to see instead?";
     } else if (!d.decisionMaker) {
+            active.currentDiscoveryField = "decisionMaker";
         discoveryQuestion = "Who would normally be involved in approving or deciding on a solution to this problem?";
     } else if (!d.budget) {
+            active.currentDiscoveryField = "budget";
         discoveryQuestion = "Has the business already set aside a budget or spending range for solving this problem?";
     } else if (!d.timeline) {
+            active.currentDiscoveryField = "timeline";
         discoveryQuestion = "When would you ideally want this problem solved or the new process in place?";
     } else {
         discoveryQuestion = "What would make you confident that the proposed solution has delivered the result you want?";
@@ -2743,6 +2767,9 @@ const commercialOffers = [
         outcome: "Create a simple digital workflow around a real business need"
     }
 ];
+
+
+
 
 
 
