@@ -1796,7 +1796,41 @@ function handleCommand(input) {
         return true;
     }
 
-    if (input === "commercial brain" || input === "commercial") { commercialBrain.analyze(); return; }
+    if (input === "next discovery" || input === "discovery question") {
+    const business = JSON.parse(fs.readFileSync("business.json", "utf8"));
+    const prospects = business.prospects || [];
+    const active = prospects.find(p => p.status !== "CLOSED");
+
+    console.log("");
+    console.log("NEXT DISCOVERY QUESTION");
+    console.log("-----------------------");
+
+    if (!active) {
+        console.log("No active prospect is currently recorded.");
+    } else {
+        const d = active.discovery || {};
+
+        if (!d.problem) {
+            console.log("What specific business problem are you trying to solve?");
+        } else if (!d.impact) {
+            console.log("Roughly how many staff hours per week are being spent handling these customer enquiries?");
+        } else if (!d.desiredOutcome) {
+            console.log("If we solved that problem, what specific result would you want to see instead?");
+        } else if (!d.decisionMaker) {
+            console.log("Who would normally be involved in approving or deciding on a solution to this problem?");
+        } else if (!d.budget) {
+            console.log("Has the business already set aside a budget or spending range for solving this problem?");
+        } else if (!d.timeline) {
+            console.log("When would you ideally want this problem solved or the new process in place?");
+        } else {
+            console.log("Discovery evidence is complete. Proceed to qualification and commercial review.");
+        }
+    }
+
+    console.log("");
+    return;
+}
+if (input === "commercial brain" || input === "commercial") { commercialBrain.analyze(); return; }
 
   // MEMORY
     if (lower.startsWith("remember ")) {
@@ -2614,6 +2648,7 @@ const commercialOffers = [
         outcome: "Create a simple digital workflow around a real business need"
     }
 ];
+
 
 
 
