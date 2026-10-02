@@ -1796,7 +1796,38 @@ function handleCommand(input) {
         return true;
     }
 
-    if (input === "next discovery" || input === "discovery question") {
+    if (input.startsWith("discovery impact ")) {
+    const value = input.slice("discovery impact ".length).trim();
+
+    if (!value) {
+        console.log("Please provide the prospect impact.");
+        return;
+    }
+
+    const business = JSON.parse(fs.readFileSync("business.json", "utf8"));
+    const prospects = business.prospects || [];
+    const active = prospects.find(p => p.status !== "CLOSED");
+
+    if (!active) {
+        console.log("No active prospect is currently recorded.");
+        return;
+    }
+
+    active.discovery = active.discovery || {};
+    active.discovery.impact = value;
+
+    fs.writeFileSync("business.json", JSON.stringify(business, null, 2));
+
+    console.log("");
+    console.log("DISCOVERY CAPTURED");
+    console.log("------------------");
+    console.log("Impact: " + value);
+    console.log("");
+    console.log("Next step: run 'next discovery'.");
+    console.log("");
+    return;
+}
+if (input === "next discovery" || input === "discovery question") {
     const business = JSON.parse(fs.readFileSync("business.json", "utf8"));
     const prospects = business.prospects || [];
     const active = prospects.find(p => p.status !== "CLOSED");
@@ -2648,6 +2679,7 @@ const commercialOffers = [
         outcome: "Create a simple digital workflow around a real business need"
     }
 ];
+
 
 
 
