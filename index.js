@@ -1796,7 +1796,71 @@ function handleCommand(input) {
         return true;
     }
 
-    if (input.startsWith("discovery impact ")) {
+    if (input.startsWith("capture discovery ")) {
+    const value = input.slice("capture discovery ".length).trim();
+
+    if (!value) {
+        console.log("Please provide the discovery answer.");
+        return;
+    }
+
+    const business = JSON.parse(fs.readFileSync("business.json", "utf8"));
+    const prospects = business.prospects || [];
+    const active = prospects.find(p => p.status !== "CLOSED");
+
+    console.log("");
+
+    if (!active) {
+        console.log("No active prospect is currently recorded.");
+        console.log("");
+        return;
+    }
+
+    active.discovery = active.discovery || {};
+    const d = active.discovery;
+
+    let field = "";
+    let label = "";
+
+    if (!d.problem) {
+        field = "problem";
+        label = "Problem";
+    } else if (!d.impact) {
+        field = "impact";
+        label = "Impact";
+    } else if (!d.desiredOutcome) {
+        field = "desiredOutcome";
+        label = "Desired outcome";
+    } else if (!d.decisionMaker) {
+        field = "decisionMaker";
+        label = "Decision maker";
+    } else if (!d.budget) {
+        field = "budget";
+        label = "Budget";
+    } else if (!d.timeline) {
+        field = "timeline";
+        label = "Timeline";
+    }
+
+    if (!field) {
+        console.log("Discovery evidence is already complete.");
+        console.log("Proceed to qualification and commercial review.");
+        console.log("");
+        return;
+    }
+
+    d[field] = value;
+    fs.writeFileSync("business.json", JSON.stringify(business, null, 2));
+
+    console.log("DISCOVERY CAPTURED");
+    console.log("------------------");
+    console.log(label + ": " + value);
+    console.log("");
+    console.log("Next step: run 'next discovery'.");
+    console.log("");
+    return;
+}
+if (input.startsWith("discovery impact ")) {
     const value = input.slice("discovery impact ".length).trim();
 
     if (!value) {
@@ -2679,6 +2743,7 @@ const commercialOffers = [
         outcome: "Create a simple digital workflow around a real business need"
     }
 ];
+
 
 
 
