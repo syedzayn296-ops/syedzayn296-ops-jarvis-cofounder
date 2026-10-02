@@ -1819,35 +1819,43 @@ function handleCommand(input) {
     active.discovery = active.discovery || {};
     const d = active.discovery;
 
-    let field = "";
+    let field = active.currentDiscoveryField || "";
     let label = "";
 
-    if (!d.problem) {
-            active.currentDiscoveryField = "problem";
+    const labels = {
+        problem: "Problem",
+        impact: "Impact",
+        currentSolution: "Current solution",
+        desiredOutcome: "Desired outcome",
+        decisionMaker: "Decision maker",
+        budget: "Budget",
+        timeline: "Timeline"
+    };
+
+    if (field) {
+        label = labels[field] || field;
+    } else if (!d.problem) {
         field = "problem";
         label = "Problem";
     } else if (!d.impact) {
-            active.currentDiscoveryField = "impact";
         field = "impact";
         label = "Impact";
+    } else if (!d.currentSolution) {
+        field = "currentSolution";
+        label = "Current solution";
     } else if (!d.desiredOutcome) {
-            active.currentDiscoveryField = "desiredOutcome";
         field = "desiredOutcome";
         label = "Desired outcome";
     } else if (!d.decisionMaker) {
-            active.currentDiscoveryField = "decisionMaker";
         field = "decisionMaker";
         label = "Decision maker";
     } else if (!d.budget) {
-            active.currentDiscoveryField = "budget";
         field = "budget";
         label = "Budget";
     } else if (!d.timeline) {
-            active.currentDiscoveryField = "timeline";
         field = "timeline";
         label = "Timeline";
     }
-
     if (!field) {
         console.log("Discovery evidence is already complete.");
         console.log("Proceed to qualification and commercial review.");
@@ -1917,6 +1925,9 @@ if (input === "next discovery" || input === "discovery question") {
         } else if (!d.impact) {
             active.currentDiscoveryField = "impact";
             console.log("Roughly how many staff hours per week are being spent handling these customer enquiries?");
+        } else if (!d.currentSolution) {
+            active.currentDiscoveryField = "currentSolution";
+            console.log("How are you handling this problem today?");
         } else if (!d.desiredOutcome) {
             active.currentDiscoveryField = "desiredOutcome";
             console.log("If we solved that problem, what specific result would you want to see instead?");
@@ -1934,6 +1945,7 @@ if (input === "next discovery" || input === "discovery question") {
         }
     }
 
+    fs.writeFileSync("business.json", JSON.stringify(business, null, 2));
     console.log("");
     return;
 }
@@ -2767,6 +2779,10 @@ const commercialOffers = [
         outcome: "Create a simple digital workflow around a real business need"
     }
 ];
+
+
+
+
 
 
 
