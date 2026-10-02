@@ -1949,6 +1949,68 @@ if (input === "next discovery" || input === "discovery question") {
     console.log("");
     return;
 }
+if (input === "run cycle" || input === "cycle") {
+    const businessState = JSON.parse(fs.readFileSync("business.json", "utf8"));
+    const activeProspects = (businessState.prospects || []).filter(p => p.status !== "CLOSED");
+
+    console.log("");
+    console.log("COFOUNDER BUSINESS CYCLE");
+    console.log("========================");
+
+    if (activeProspects.length === 0) {
+        console.log("No active prospect found.");
+        console.log("Next action: identify and record a real commercial prospect.");
+        console.log("");
+        return;
+    }
+
+    const prospect = activeProspects[0];
+    const d = prospect.discovery || {};
+    const required = [
+        ["problem", d.problem],
+        ["impact", d.impact],
+        ["current solution", d.currentSolution],
+        ["desired outcome", d.desiredOutcome],
+        ["decision maker", d.decisionMaker]
+    ];
+
+    const missing = required
+        .filter(item => !item[1] || !item[1].trim())
+        .map(item => item[0]);
+
+    console.log("Active prospect: " + (prospect.name || "Unknown"));
+    console.log("");
+
+    if (missing.length > 0) {
+        console.log("STAGE: DISCOVERY");
+        console.log("----------------");
+        console.log("Missing core evidence: " + missing.join(", "));
+        console.log("Next action: continue discovery.");
+        console.log("");
+        return;
+    }
+
+    const qualification = prospect.qualification || {};
+
+    if (qualification.status !== "QUALIFIED") {
+        console.log("STAGE: QUALIFICATION");
+        console.log("--------------------");
+        console.log("Core discovery evidence is complete.");
+        console.log("Next action: qualify prospect.");
+        console.log("");
+        return;
+    }
+
+    console.log("STAGE: COMMERCIAL REVIEW");
+    console.log("------------------------");
+    console.log("Prospect is qualified.");
+    console.log("Next action: review offer fit and prepare commercial terms.");
+    console.log("Approval required before any external commercial action.");
+    console.log("");
+
+    commercialBrain.analyze();
+    return;
+}
 if (input === "commercial brain" || input === "commercial") { commercialBrain.analyze(); return; }
 
   // MEMORY
@@ -2779,6 +2841,7 @@ const commercialOffers = [
         outcome: "Create a simple digital workflow around a real business need"
     }
 ];
+
 
 
 
