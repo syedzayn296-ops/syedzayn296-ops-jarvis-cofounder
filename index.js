@@ -2045,17 +2045,42 @@ if (input === "run cycle" || input === "cycle") {
     const activeApprovals = Array.isArray(cofounderState.approvals)
         ? cofounderState.approvals.filter(a => a.status === "ACTIVE")
         : [];
+    const executions = Array.isArray(cofounderState.executions)
+        ? cofounderState.executions
+        : [];
 
     if (activeApprovals.length === 0) {
         console.log("STATUS: READY FOR ZAYN APPROVAL");
     } else {
-        console.log("STATUS: APPROVAL RECORDED");
-        activeApprovals.forEach(a => {
-            console.log("Approved action: " + (a.action || "Unknown action"));
-            console.log("Approved by: " + (a.approvedBy || "Unknown"));
-            console.log("Approval date: " + (a.date || "Unknown"));
-        });
-        console.log("Next stage: execute approved action when explicitly instructed.");
+        const recordedExecutions = activeApprovals.filter(approval =>
+            executions.some(execution =>
+                execution.status === "INTERNAL_ACTION_RECORDED" &&
+                execution.action === approval.action
+            )
+        );
+
+        if (recordedExecutions.length > 0) {
+            console.log("STATUS: INTERNAL ACTION RECORDED");
+            recordedExecutions.forEach(a => {
+                console.log("Approved action: " + (a.action || "Unknown action"));
+                console.log("Approved by: " + (a.approvedBy || "Unknown"));
+                const execution = executions.find(e =>
+                    e.status === "INTERNAL_ACTION_RECORDED" &&
+                    e.action === a.action
+                );
+                console.log("Executed by: " + (execution?.executedBy || "Unknown"));
+                console.log("Execution date: " + (execution?.executedDate || "Unknown"));
+            });
+            console.log("Next stage: determine the next commercial action.");
+        } else {
+            console.log("STATUS: APPROVAL RECORDED");
+            activeApprovals.forEach(a => {
+                console.log("Approved action: " + (a.action || "Unknown action"));
+                console.log("Approved by: " + (a.approvedBy || "Unknown"));
+                console.log("Approval date: " + (a.date || "Unknown"));
+            });
+            console.log("Next stage: execute approved action when explicitly instructed.");
+        }
     }
 
     console.log("External action: BLOCKED");
@@ -2930,6 +2955,7 @@ const commercialOffers = [
         outcome: "Create a simple digital workflow around a real business need"
     }
 ];
+
 
 
 
