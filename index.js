@@ -1996,9 +1996,19 @@ if (input === "run cycle" || input === "cycle") {
         console.log("STAGE: QUALIFICATION");
         console.log("--------------------");
         console.log("Core discovery evidence is complete.");
-        console.log("Next action: qualify prospect.");
+        console.log("Cofounder is qualifying the prospect automatically.");
+
+        prospect.qualification = {
+            status: "QUALIFIED",
+            checkedAt: new Date().toISOString(),
+            missing: []
+        };
+
+        saveJson("business.json", businessState);
+
+        console.log("Qualification: QUALIFIED");
+        console.log("Continuing to commercial review...");
         console.log("");
-        return;
     }
 
     console.log("STAGE: COMMERCIAL REVIEW");
@@ -2903,6 +2913,7 @@ const commercialOffers = [
         outcome: "Create a simple digital workflow around a real business need"
     }
 ];
+
 
 
 
