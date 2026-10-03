@@ -1073,6 +1073,13 @@ function showProspectIntelligence() {
         for (const issue of evidenceIssues) {
             console.log("FLAG:", issue);
         }
+
+        console.log("\nEVIDENCE RESOLUTION REQUIRED");
+        console.log("Review the flagged discovery value before a recommendation can be generated.");
+        console.log("Use the existing discovery command to correct it:");
+        console.log("discovery impact <correct value>");
+        console.log("or");
+        console.log("discovery outcome <correct value>");
     } else {
         console.log("No obvious discovery consistency issues detected.");
     }
