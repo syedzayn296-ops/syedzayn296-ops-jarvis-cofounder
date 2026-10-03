@@ -1137,6 +1137,36 @@ function showProspectIntelligence() {
         console.log("Reason:", "Core evidence is present and no unresolved recommendation blockers were detected.");
     }
 
+    console.log("\nRECOMMENDATION");
+
+    if (recommendationBlockers.length) {
+        console.log("Status:", "NOT GENERATED");
+        console.log("Reason:", "Recommendation remains blocked until the evidence issues are resolved.");
+    } else {
+        const recommendation = {
+            service: "AI & Digital Tools",
+            proposal: "Explore an enquiry-handling workflow that reduces manual staff effort.",
+            why: "The prospect reports that customer enquiries are consuming staff time.",
+            evidence: [
+                discovery.problem,
+                discovery.impact,
+                discovery.currentSolution,
+                discovery.desiredOutcome
+            ].filter(Boolean),
+            confidence: "MEDIUM",
+            nextAction: "Confirm enquiry volume, channels, workflow, desired response process and commercial constraints.",
+            approval: "PENDING ZAYN APPROVAL"
+        };
+
+        console.log("Status:", "READY FOR REVIEW");
+        console.log("Service:", recommendation.service);
+        console.log("Proposal:", recommendation.proposal);
+        console.log("Why:", recommendation.why);
+        console.log("Confidence:", recommendation.confidence);
+        console.log("Next action:", recommendation.nextAction);
+        console.log("Approval:", recommendation.approval);
+    }
+
     console.log("\nQUALIFICATION");
     if (prospect.qualification) {
         console.log("Status:", prospect.qualification.status || "Not qualified");
