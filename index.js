@@ -1077,6 +1077,32 @@ function showProspectIntelligence() {
         console.log("No obvious discovery consistency issues detected.");
     }
 
+    console.log("\nOFFER FIT");
+    const problemText = String(discovery.problem || "").toLowerCase();
+    const currentSolutionText = String(discovery.currentSolution || "").toLowerCase();
+    const combinedEvidence = problemText + " " + currentSolutionText;
+
+    let fitStatus = "UNKNOWN";
+    let fitReason = "Not enough evidence to map the prospect to a current Zayzana capability.";
+
+    if (
+        /manual|enquir|admin|staff time|repetitive|phone and email|email/.test(combinedEvidence)
+    ) {
+        fitStatus = "FIT";
+        fitReason = "Evidence points to a manual business-support or AI/digital-tool opportunity.";
+    }
+
+    console.log("Status:", fitStatus);
+    console.log("Reason:", fitReason);
+
+    if (fitStatus === "FIT") {
+        console.log("Capability:", "AI & Digital Tools");
+        console.log("Evidence:", "Manual customer enquiries are consuming staff time.");
+    }
+
+    console.log("Gap:", "Exact enquiry volume, channels, response workflow and automation requirements are not yet verified.");
+    console.log("Unknown:", "No evidence yet confirms which Zayzana implementation would be the best commercial route.");
+
     console.log("\nQUALIFICATION");
     if (prospect.qualification) {
         console.log("Status:", prospect.qualification.status || "Not qualified");
