@@ -1044,6 +1044,39 @@ function showProspectIntelligence() {
         console.log(label + ":", value || "Not recorded");
     }
 
+    console.log("\nEVIDENCE CHECK");
+    const evidenceIssues = [];
+
+    if (
+        discovery.impact &&
+        discovery.desiredOutcome &&
+        /\d+/.test(discovery.impact) &&
+        /\d+/.test(discovery.desiredOutcome)
+    ) {
+        const impactNumber = Number(discovery.impact.match(/\d+/)?.[0]);
+        const outcomeNumber = Number(discovery.desiredOutcome.match(/\d+/)?.[0]);
+
+        if (
+            Number.isFinite(impactNumber) &&
+            Number.isFinite(outcomeNumber) &&
+            /hour/i.test(discovery.impact) &&
+            /hour/i.test(discovery.desiredOutcome) &&
+            outcomeNumber > impactNumber
+        ) {
+            evidenceIssues.push(
+                "Desired outcome records more hours than current impact; verify whether this is intentional."
+            );
+        }
+    }
+
+    if (evidenceIssues.length) {
+        for (const issue of evidenceIssues) {
+            console.log("FLAG:", issue);
+        }
+    } else {
+        console.log("No obvious discovery consistency issues detected.");
+    }
+
     console.log("\nQUALIFICATION");
     if (prospect.qualification) {
         console.log("Status:", prospect.qualification.status || "Not qualified");
