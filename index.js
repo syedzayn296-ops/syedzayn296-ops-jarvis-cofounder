@@ -979,7 +979,122 @@ function showProspectIntelligence() {
  // STEP 19 â€” PROSPECT DISCOVERY
  // --------------------------------------------------
 
- function showProspectDiscovery() {
+ function showProspectWorkspace() {
+    const businessData = loadJson("./business.json", {
+        prospects: [],
+        opportunities: [],
+        offers: [],
+        followUps: [],
+        revenue: []
+    });
+
+    const prospect = businessData.prospects.find(item => item.status !== "CLOSED");
+
+    console.log("\nJARVIS PROSPECT WORKSPACE");
+    console.log("-------------------------");
+
+    if (!prospect) {
+        console.log("No active prospect found.");
+        return;
+    }
+
+    console.log("IDENTITY");
+    console.log("Name:", prospect.name);
+    console.log("Status:", prospect.status || "UNKNOWN");
+    console.log("Details:", prospect.details || "Not recorded");
+
+    console.log("\nRESEARCH");
+    if (prospect.research) {
+        console.log(
+            "Facts:",
+            prospect.research.facts?.length
+                ? prospect.research.facts.join(" | ")
+                : "None recorded"
+        );
+        console.log(
+            "Sources:",
+            prospect.research.sources?.length
+                ? prospect.research.sources.join(" | ")
+                : "None recorded"
+        );
+        console.log(
+            "Unknowns:",
+            prospect.research.unknowns?.length
+                ? prospect.research.unknowns.join(" | ")
+                : "None recorded"
+        );
+    } else {
+        console.log("Research layer not yet populated.");
+    }
+
+    console.log("\nDISCOVERY");
+    const discovery = prospect.discovery || {};
+    const fields = [
+        ["Problem", discovery.problem],
+        ["Impact", discovery.impact],
+        ["Current solution", discovery.currentSolution],
+        ["Desired outcome", discovery.desiredOutcome],
+        ["Decision maker", discovery.decisionMaker],
+        ["Budget", discovery.budget],
+        ["Timeline", discovery.timeline],
+        ["Notes", discovery.notes]
+    ];
+
+    for (const [label, value] of fields) {
+        console.log(label + ":", value || "Not recorded");
+    }
+
+    console.log("\nQUALIFICATION");
+    if (prospect.qualification) {
+        console.log("Status:", prospect.qualification.status || "Not qualified");
+        console.log("Checked:", prospect.qualification.checkedAt || "Not checked");
+        console.log(
+            "Missing:",
+            prospect.qualification.missing?.length
+                ? prospect.qualification.missing.join(" | ")
+                : "None recorded"
+        );
+    } else {
+        console.log("Not yet qualified.");
+    }
+
+    console.log("\nCOMMERCIAL PIPELINE");
+    console.log(
+        "Open opportunities:",
+        businessData.opportunities.filter(item => item.status !== "CLOSED").length
+    );
+    console.log(
+        "Available offers:",
+        businessData.offers.filter(item => item.status !== "CLOSED").length
+    );
+    console.log(
+        "Open follow-ups:",
+        businessData.followUps.filter(item => item.status !== "CLOSED").length
+    );
+    console.log(
+        "Recorded revenue:",
+        businessData.revenue.reduce(
+            (sum, item) => sum + (Number(item.amount) || 0),
+            0
+        )
+    );
+
+    console.log("\nNEXT STAGE");
+    if (!prospect.discovery || !prospect.qualification) {
+        console.log("Discovery");
+    } else if (prospect.qualification.status !== "QUALIFIED") {
+        console.log("Qualification");
+    } else {
+        console.log("Offer Fit / Recommendation");
+    }
+
+    console.log("\nRULE");
+    console.log(
+        "Evidence first. Qualification second. Recommendation third. Approval before consequential action."
+    );
+}
+
+function showProspectDiscovery() {
      console.log("\nJARVIS PROSPECT DISCOVERY");
      console.log("-------------------------");
 
@@ -2213,7 +2328,17 @@ if (input === "commercial brain" || input === "commercial") { commercialBrain.an
         return true;
     }
 
-    // STEP 19 â€” PROSPECT DISCOVERY
+    // PROSPECT WORKSPACE
+    if (
+        lower === "prospect workspace" ||
+        lower === "workspace" ||
+        lower === "show prospect workspace"
+    ) {
+        showProspectWorkspace();
+        return true;
+    }
+
+    // STEP 19 ? PROSPECT DISCOVERY
     if (
         lower === "prospect discovery" ||
         lower === "prospect discovery brain" ||
@@ -2223,6 +2348,7 @@ if (input === "commercial brain" || input === "commercial") { commercialBrain.an
         showProspectDiscovery();
         return true;
     }
+
     // STEP 19 â€” DISCOVERY CAPTURE
     if (lower.startsWith("discovery ")) {
         const parts = trimmed.split(" ");
