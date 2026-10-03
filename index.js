@@ -1103,6 +1103,40 @@ function showProspectIntelligence() {
     console.log("Gap:", "Exact enquiry volume, channels, response workflow and automation requirements are not yet verified.");
     console.log("Unknown:", "No evidence yet confirms which Zayzana implementation would be the best commercial route.");
 
+    console.log("\nRECOMMENDATION GATE");
+    const recommendationBlockers = [];
+
+    if (evidenceIssues.length > 0) {
+        recommendationBlockers.push("Discovery evidence contains unresolved consistency issues.");
+    }
+
+    if (!discovery.problem) {
+        recommendationBlockers.push("Problem is not recorded.");
+    }
+
+    if (!discovery.impact) {
+        recommendationBlockers.push("Impact is not recorded.");
+    }
+
+    if (!discovery.desiredOutcome) {
+        recommendationBlockers.push("Desired outcome is not recorded.");
+    }
+
+    if (fitStatus !== "FIT") {
+        recommendationBlockers.push("No confirmed Zayzana capability fit.");
+    }
+
+    if (recommendationBlockers.length) {
+        console.log("Status:", "BLOCKED");
+        console.log("Reason:", "Recommendation requires stronger evidence before a solution is proposed.");
+        recommendationBlockers.forEach((item, index) => {
+            console.log((index + 1) + ".", item);
+        });
+    } else {
+        console.log("Status:", "READY FOR REVIEW");
+        console.log("Reason:", "Core evidence is present and no unresolved recommendation blockers were detected.");
+    }
+
     console.log("\nQUALIFICATION");
     if (prospect.qualification) {
         console.log("Status:", prospect.qualification.status || "Not qualified");
