@@ -1487,6 +1487,47 @@ function decide(input) {
 function handleCommand(input) {
     const trimmed = input.trim();
     const lower = trimmed.toLowerCase();
+
+    // COFOUNDER FRONT DOOR
+    if (lower === "help") {
+        console.log("");
+        console.log("COFOUNDER COMMANDS");
+        console.log("------------------");
+        console.log("today          - What should I work on?");
+        console.log("opportunities  - Show commercial opportunities");
+        console.log("followups      - Show current actions/follow-ups");
+        console.log("status         - Show Zayzana business status");
+        console.log("priorities     - Show current business priorities");
+        console.log("focus          - Show Zayzana focus");
+        console.log("decisions      - Show recorded decisions");
+        console.log("");
+        return true;
+    }
+
+    if (lower === "today" || lower === "followups" || lower === "actions") {
+        showActionBrain();
+        return true;
+    }
+
+    if (lower === "opportunities" || lower === "prospects") {
+        showProspectIntelligence();
+        return true;
+    }
+
+    if (lower === "status" || lower === "business") {
+        showBusinessOverview();
+        return true;
+    }
+
+    if (lower === "priorities") {
+        showBusinessPriorities();
+        return true;
+    }
+
+    if (lower === "focus") {
+        showZayzanaFocus();
+        return true;
+    }
     if (lower.startsWith("record decision ")) {
         const decisionText = trimmed.slice("record decision ".length).trim();
         const stateFile = "cofounder-state.json";
@@ -3257,6 +3298,7 @@ const commercialOffers = [
         outcome: "Create a simple digital workflow around a real business need"
     }
 ];
+
 
 
 
