@@ -988,7 +988,21 @@ function showProspectIntelligence() {
         revenue: []
     });
 
+    const cofounderState = loadJson("./cofounder-state.json", {
+        approvals: []
+    });
+
     const prospect = businessData.prospects.find(item => item.status !== "CLOSED");
+
+    const matchingApprovals = Array.isArray(cofounderState.approvals)
+        ? cofounderState.approvals.filter(
+            approval => approval.action === "Explore an enquiry-handling workflow that reduces manual staff effort."
+        )
+        : [];
+
+    const latestApproval = matchingApprovals.length
+        ? matchingApprovals[matchingApprovals.length - 1]
+        : null;
 
     console.log("\nJARVIS PROSPECT WORKSPACE");
     console.log("-------------------------");
@@ -1161,9 +1175,18 @@ function showProspectIntelligence() {
                 discovery.desiredOutcome
             ].filter(Boolean),
             confidence: "MEDIUM",
-            nextAction: "Confirm enquiry volume, channels, workflow, desired response process and commercial constraints.",
-            approval: "PENDING ZAYN APPROVAL"
+            nextAction: "Confirm enquiry volume, channels, workflow, desired response process and commercial constraints."
         };
+
+        let approvalStatus = "PENDING ZAYN APPROVAL";
+
+        if (latestApproval) {
+            if (latestApproval.status === "ACTIVE") {
+                approvalStatus = "ACTIVE";
+            } else if (latestApproval.status === "EXECUTED") {
+                approvalStatus = "EXECUTED";
+            }
+        }
 
         console.log("Status:", "READY FOR REVIEW");
         console.log("Service:", recommendation.service);
@@ -1171,7 +1194,22 @@ function showProspectIntelligence() {
         console.log("Why:", recommendation.why);
         console.log("Confidence:", recommendation.confidence);
         console.log("Next action:", recommendation.nextAction);
-        console.log("Approval:", recommendation.approval);
+        console.log("Approval:", approvalStatus);
+if (latestApproval) {
+    const approvalNumber = cofounderState.approvals.indexOf(latestApproval) + 1;
+    console.log("Approval number:", approvalNumber);
+}
+        if (latestApproval) {
+            console.log("Approved by:", latestApproval.approvedBy || "Unknown");
+            console.log("Approval date:", latestApproval.date || "Unknown");
+
+            if (latestApproval.status === "EXECUTED") {
+                console.log(
+                    "Execution:",
+                    latestApproval.executionStatus || "INTERNAL_ACTION_RECORDED"
+                );
+            }
+        }
     }
 
     console.log("\nQUALIFICATION");
@@ -1214,8 +1252,16 @@ function showProspectIntelligence() {
         console.log("Discovery");
     } else if (prospect.qualification.status !== "QUALIFIED") {
         console.log("Qualification");
-    } else {
+    } else if (recommendationBlockers.length > 0) {
         console.log("Offer Fit / Recommendation");
+    } else if (!latestApproval) {
+        console.log("Zayn Approval");
+    } else if (latestApproval.status === "ACTIVE") {
+        console.log("Action / Execution");
+    } else if (latestApproval.status === "EXECUTED") {
+        console.log("Outcome / Lesson");
+    } else {
+        console.log("Zayn Approval");
     }
 
     console.log("\nRULE");
@@ -3211,6 +3257,11 @@ const commercialOffers = [
         outcome: "Create a simple digital workflow around a real business need"
     }
 ];
+
+
+
+
+
 
 
 
