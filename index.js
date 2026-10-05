@@ -1634,6 +1634,22 @@ function worldModel() {
     };
 }
 
+function founderDashboard() {
+    const world = worldModel();
+    const heartbeat = evaluateHeartbeat();
+    const state = loadJson("cofounder-state.json", {});
+    const executions = Array.isArray(state.executions) ? state.executions : [];
+
+    return {
+        generatedAt: new Date().toISOString(),
+        company: world.company,
+        heartbeatStatus: heartbeat.status,
+        topSignal: heartbeat.signals.length > 0 ? heartbeat.signals[0] : null,
+        business: world.business,
+        knowledge: world.knowledge,
+        pendingVerification: executions.filter(e => e.verificationStatus === "PENDING").length
+    };
+}
 function showWorldModel() {
     const world = worldModel();
 
@@ -1763,7 +1779,56 @@ function handleCommand(input) {
     const trimmed = input.trim();
     const lower = trimmed.toLowerCase();
 
-    if (lower === "heartbeat" || lower === "cofounder heartbeat") {
+    if (lower === "status" || lower === "founder status" || lower === "cofounder status") {
+    const dashboard = founderDashboard();
+
+    console.log("\nCOFOUNDER FOUNDER DASHBOARD");
+    console.log("---------------------------");
+    console.log("Company: " + dashboard.company);
+    console.log("Heartbeat: " + dashboard.heartbeatStatus);
+
+    console.log("\nBUSINESS");
+    console.log("--------");
+    console.log("Open prospects: " + dashboard.business.openProspects);
+    console.log("Open opportunities: " + dashboard.business.openOpportunities);
+    console.log("Offers: " + dashboard.business.offers);
+    console.log("Follow-ups: " + dashboard.business.followUps);
+    console.log("Revenue records: " + dashboard.business.revenueRecords);
+
+    console.log("\nCONTROL & KNOWLEDGE");
+    console.log("-------------------");
+    console.log("Facts: " + dashboard.knowledge.facts);
+    console.log("Decisions: " + dashboard.knowledge.decisions);
+    console.log("Pending approvals: " + dashboard.knowledge.approvals);
+    console.log("Executions: " + dashboard.knowledge.executions);
+    console.log("Pending verification: " + dashboard.pendingVerification);
+    console.log("Unverified research: " + dashboard.knowledge.unverifiedResearch);
+
+    console.log("\nWHAT MATTERS NOW");
+    console.log("----------------");
+    if (dashboard.topSignal) {
+        console.log("[" + dashboard.topSignal.type + "] " + dashboard.topSignal.message);
+    } else {
+        console.log("Nothing currently requires attention.");
+    }
+
+    const actionQueue = buildActionQueue();
+
+    console.log("\nNEXT RECOMMENDED ACTION");
+    console.log("------------------------");
+    if (actionQueue.actions.length > 0) {
+        const nextAction = actionQueue.actions[0];
+        console.log("[" + nextAction.type + "] " + nextAction.action);
+        console.log("Approval: " + (nextAction.approvalRequired ? "Zayn approval required" : "Not required"));
+    } else {
+        console.log("No recommended action.");
+    }
+
+    console.log("\nDASHBOARD RULE");
+    console.log("Read-only founder view. No external action was taken.");
+    return;
+}
+if (lower === "heartbeat" || lower === "cofounder heartbeat") {
         showHeartbeat();
         return;
     }
@@ -3792,5 +3857,10 @@ function showActionQueue() {
     console.log("\nACTION RULE");
     console.log("Recommendations only. Nothing is executed automatically.");
 }
+
+
+
+
+
 
 
