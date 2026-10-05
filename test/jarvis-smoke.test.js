@@ -1,4 +1,4 @@
-const test = require('node:test');
+﻿const test = require('node:test');
 const assert = require('node:assert/strict');
 const { spawnSync } = require('node:child_process');
 const fs = require('node:fs');
@@ -233,6 +233,55 @@ test('cofounder execution gate executes only an active approval and records the 
   assert.equal(state.executions[0].executedBy, 'JARVIS');
 });
 
+test('cofounder marks a new execution as pending verification', () => {
+  const { result, state } = runIsolatedJarvis(
+    prospectFixture(),
+    'approve recommendation complete prospect qualification before contracting\nexecute approved 1\n'
+  );
+
+  assert.equal(result.error?.code, 'ETIMEDOUT');
+  assert.equal(state.executions.length, 1);
+  assert.equal(state.executions[0].verificationStatus, 'PENDING');
+  assert.equal(state.approvals[0].verificationStatus, 'PENDING');
+});
+test('cofounder verifies a completed execution', () => {
+  const { result, state } = runIsolatedJarvis(
+    prospectFixture(),
+    'approve recommendation complete prospect qualification before contracting\nexecute approved 1\nverify execution 1 verified\nverify execution 1 verified\n'
+  );
+
+  assert.equal(result.error?.code, 'ETIMEDOUT');
+  assert.match(result.stdout, /COFOUNDER EXECUTION VERIFIED/);
+  assert.match(result.stdout, /Verification: VERIFIED/);
+  assert.match(result.stdout, /This execution is not pending verification/);
+  assert.equal(state.executions.length, 1);
+  assert.equal(state.executions[0].verificationStatus, 'VERIFIED');
+  assert.equal(state.approvals[0].verificationStatus, 'VERIFIED');
+});
+test('cofounder records a failed execution verification', () => {
+  const { result, state } = runIsolatedJarvis(
+    prospectFixture(),
+    'approve recommendation complete prospect qualification before contracting\nexecute approved 1\nverify execution 1 failed\n'
+  );
+
+  assert.equal(result.error?.code, 'ETIMEDOUT');
+  assert.match(result.stdout, /Verification: FAILED/);
+  assert.equal(state.executions.length, 1);
+  assert.equal(state.executions[0].verificationStatus, 'FAILED');
+  assert.equal(state.approvals[0].verificationStatus, 'FAILED');
+});
+test('cofounder records an unknown execution verification', () => {
+  const { result, state } = runIsolatedJarvis(
+    prospectFixture(),
+    'approve recommendation complete prospect qualification before contracting\nexecute approved 1\nverify execution 1 unknown\n'
+  );
+
+  assert.equal(result.error?.code, 'ETIMEDOUT');
+  assert.match(result.stdout, /Verification: UNKNOWN/);
+  assert.equal(state.executions.length, 1);
+  assert.equal(state.executions[0].verificationStatus, 'UNKNOWN');
+  assert.equal(state.approvals[0].verificationStatus, 'UNKNOWN');
+});
 test('cofounder blocks execution when an approval has already been executed', () => {
   const { result, state } = runIsolatedJarvis(
     prospectFixture(),
@@ -346,3 +395,6 @@ test('cofounder carries a recorded lesson into a future recommendation', () => {
   assert.match(result.stdout ?? '', /Focus first on: complete prospect qualification before contracting/);
   assert.match(result.stdout ?? '', /LEARNING SIGNAL: A past decision lesson indicates qualification should happen before contracting/);
 });
+
+
+
