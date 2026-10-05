@@ -1,4 +1,4 @@
-﻿const fs = require("fs");
+const fs = require("fs");
 const readline = require("readline");
 const { exec } = require("child_process");
 
@@ -211,7 +211,7 @@ function addReminder(message, time) {
     saveJson(remindersFile, reminders);
 
     console.log(
-        `JARVIS > Reminder saved: ${message} â€” ${new Date(time).toLocaleString()}`
+        `JARVIS > Reminder saved: ${message} — ${new Date(time).toLocaleString()}`
     );
 }
 
@@ -229,7 +229,7 @@ function showReminders() {
         const status = reminder.fired ? "FIRED" : "OPEN";
 
         console.log(
-            `${index + 1}. [${status}] ${reminder.message} â€” ${new Date(
+            `${index + 1}. [${status}] ${reminder.message} — ${new Date(
                 reminderTime
             ).toLocaleString()}`
         );
@@ -242,7 +242,7 @@ function checkReminders() {
 
         if (!reminder.fired && reminderTime && Date.now() >= reminderTime) {
             console.log(
-                `\nðŸ”” JARVIS REMINDER: ${reminder.message}\n`
+                `\n🔔 JARVIS REMINDER: ${reminder.message}\n`
             );
 
             reminder.fired = true;
@@ -523,7 +523,7 @@ function addRevenue(amount, description) {
     saveJson(businessFile, business);
 
     console.log(
-        `JARVIS > Revenue recorded: ${numericAmount} â€” ${
+        `JARVIS > Revenue recorded: ${numericAmount} — ${
             description || "No description"
         }`
     );
@@ -544,7 +544,7 @@ function showRevenue() {
         total += Number(item.amount) || 0;
 
         console.log(
-            `${index + 1}. ${item.amount} â€” ${
+            `${index + 1}. ${item.amount} — ${
                 item.description || "No description"
             }`
         );
@@ -554,7 +554,7 @@ function showRevenue() {
 }
 
 // --------------------------------------------------
-// STEP 15 â€” ACTION BRAIN
+// STEP 15 — ACTION BRAIN
 // --------------------------------------------------
 
 function showActionBrain() {
@@ -665,7 +665,7 @@ function showBusinessPriorities() {
 }
 
 // --------------------------------------------------
-// STEP 16 â€” ZAYZANA OPERATING BRAIN
+// STEP 16 — ZAYZANA OPERATING BRAIN
 // --------------------------------------------------
 
 function showOperatingBrain() {
@@ -806,7 +806,7 @@ function showOperatingBrain() {
 }
 
 // --------------------------------------------------
-// STEP 17 â€” OPPORTUNITY ACTION BRAIN
+// STEP 17 — OPPORTUNITY ACTION BRAIN
 // --------------------------------------------------
 
 function showOpportunityAction() {
@@ -937,21 +937,21 @@ function showZayzanaFocus() {
 
     if (openFollowUps.length > 0) {
         console.log(
-            `CURRENT FOCUS: Follow-up â€” ${openFollowUps[0].text}`
+            `CURRENT FOCUS: Follow-up — ${openFollowUps[0].text}`
         );
         return;
     }
 
     if (openProspects.length > 0) {
         console.log(
-            `CURRENT FOCUS: Prospect â€” ${openProspects[0].name}`
+            `CURRENT FOCUS: Prospect — ${openProspects[0].name}`
         );
         return;
     }
 
     if (openOpportunities.length > 0) {
         console.log(
-            `CURRENT FOCUS: Opportunity â€” ${openOpportunities[0].text}`
+            `CURRENT FOCUS: Opportunity — ${openOpportunities[0].text}`
         );
         return;
     }
@@ -962,7 +962,7 @@ function showZayzanaFocus() {
 }
 
 // --------------------------------------------------
-// STEP 18 â€” PROSPECT INTELLIGENCE
+// STEP 18 — PROSPECT INTELLIGENCE
 // --------------------------------------------------
 
 function showProspectIntelligence() {
@@ -1017,7 +1017,7 @@ function showProspectIntelligence() {
         );
     } else {
         console.log(
-            "INSUFFICIENT INFORMATION â€” do not assume the prospect's problem."
+            "INSUFFICIENT INFORMATION — do not assume the prospect's problem."
         );
     }
 
@@ -1045,7 +1045,7 @@ function showProspectIntelligence() {
 
 // --------------------------------------------------
  // --------------------------------------------------
- // STEP 19 â€” PROSPECT DISCOVERY
+ // STEP 19 — PROSPECT DISCOVERY
  // --------------------------------------------------
 
  function showProspectWorkspace() {
@@ -1475,7 +1475,7 @@ function decide(input) {
 
         if (projectKey) {
             console.log(
-                `Decision: WORK_ON â†’ ${projectKey}`
+                `Decision: WORK_ON → ${projectKey}`
             );
 
             console.log(
@@ -1680,6 +1680,11 @@ function handleCommand(input) {
 
     if (lower === "heartbeat" || lower === "cofounder heartbeat") {
         showHeartbeat();
+        return;
+    }
+
+    if (lower === "actions" || lower === "action queue" || lower === "cofounder actions") {
+        showActionQueue();
         return;
     }
 
@@ -2781,7 +2786,7 @@ if (input === "commercial brain" || input === "commercial") { commercialBrain.an
         return true;
     }
 
-    // STEP 19 â€” DISCOVERY CAPTURE
+    // STEP 19 — DISCOVERY CAPTURE
     if (lower.startsWith("discovery ")) {
         const parts = trimmed.split(" ");
         const field = parts[1];
@@ -2854,7 +2859,7 @@ if (input === "commercial brain" || input === "commercial") { commercialBrain.an
         console.log(`JARVIS > Discovery saved: ${fieldMap[field]}`);
         return true;
     }
-    // STEP 19 â€” PROSPECT QUALIFICATION
+    // STEP 19 — PROSPECT QUALIFICATION
     if (
         lower === "prospect qualification" ||
         lower === "qualify prospect" ||
@@ -2930,7 +2935,7 @@ if (input === "commercial brain" || input === "commercial") { commercialBrain.an
 
         return true;
     }
-    // STEP 19 â€” PROSPECT RECOMMENDATION
+    // STEP 19 — PROSPECT RECOMMENDATION
     if (
         lower === "prospect recommendation" ||
         lower === "recommend for prospect" ||
@@ -2985,11 +2990,11 @@ if (input === "commercial brain" || input === "commercial") { commercialBrain.an
 
             console.log("\nPOSSIBLE AREAS TO INVESTIGATE");
             console.log("-----------------------------");
-            console.log("â€¢ AI automation");
-            console.log("â€¢ Business process automation");
-            console.log("â€¢ Customer support tools");
-            console.log("â€¢ Internal tools");
-            console.log("â€¢ Website or lightweight software");
+            console.log("• AI automation");
+            console.log("• Business process automation");
+            console.log("• Customer support tools");
+            console.log("• Internal tools");
+            console.log("• Website or lightweight software");
 
             console.log("\nRECOMMENDATION");
             console.log("--------------");
@@ -3513,4 +3518,79 @@ const commercialOffers = [
         outcome: "Create a simple digital workflow around a real business need"
     }
 ];
+
+
+function buildActionQueue() {
+    const heartbeat = evaluateHeartbeat();
+    const actions = [];
+
+    heartbeat.signals.forEach(signal => {
+        if (signal.type === "FOLLOW_UP") {
+            actions.push({
+                priority: signal.priority,
+                type: "FOLLOW_UP",
+                action: "Review and work the open follow-up(s).",
+                approvalRequired: true
+            });
+        }
+
+        if (signal.type === "APPROVAL") {
+            actions.push({
+                priority: signal.priority,
+                type: "APPROVAL",
+                action: "Review the active approval(s) and confirm whether they are still valid.",
+                approvalRequired: true
+            });
+        }
+
+        if (signal.type === "COMMERCIAL") {
+            actions.push({
+                priority: signal.priority,
+                type: "COMMERCIAL",
+                action: "Review available research and identify one legitimate commercial opportunity.",
+                approvalRequired: true
+            });
+        }
+
+        if (signal.type === "RESEARCH") {
+            actions.push({
+                priority: signal.priority,
+                type: "RESEARCH",
+                action: "Review the unverified research and decide whether any finding should become a verified Zayzana fact.",
+                approvalRequired: true
+            });
+        }
+    });
+
+    actions.sort((a, b) => b.priority - a.priority);
+
+    return {
+        generatedAt: new Date().toISOString(),
+        actions
+    };
+}
+
+function showActionQueue() {
+    const queue = buildActionQueue();
+
+    console.log("\nCOFOUNDER ACTION QUEUE");
+    console.log("----------------------");
+    console.log(`Generated: ${queue.generatedAt}`);
+
+    if (queue.actions.length === 0) {
+        console.log("No recommended actions.");
+        console.log("Cofounder remains quiet.");
+        return;
+    }
+
+    queue.actions.forEach((action, index) => {
+        console.log(`\n${index + 1}. [${action.type}]`);
+        console.log("Action:", action.action);
+        console.log("Approval:", action.approvalRequired ? "Zayn approval required" : "Not required");
+    });
+
+    console.log("\nACTION RULE");
+    console.log("Recommendations only. Nothing is executed automatically.");
+}
+
 
