@@ -1,4 +1,4 @@
-﻿const fs = require("fs");
+const fs = require("fs");
 const readline = require("readline");
 const { exec } = require("child_process");
 
@@ -29,6 +29,75 @@ function saveJson(file, data) {
     fs.writeFileSync(file, JSON.stringify(data, null, 2));
 }
 
+function classifyResearchResult(query, title, url) {
+    const q = query.toLowerCase();
+    const t = (title || "").toLowerCase();
+    const u = (url || "").toLowerCase();
+
+    const tokens = q.split(/\s+/).filter(token => token.length >= 4);
+    const matches = tokens.filter(token => t.includes(token) || u.includes(token)).length;
+
+    if (matches >= Math.min(2, tokens.length)) return "LIKELY MATCH";
+    if (matches === 1) return "NAME COLLISION";
+    return "IRRELEVANT";
+}
+function formatResearchClassification(query, result) {
+    const lines = result.split(/\r?\n/);
+    const output = [];
+    let title = "";
+    let url = "";
+
+    for (const line of lines) {
+        if (line.startsWith("Title: ")) {
+            title = line.slice(7).trim();
+        }
+
+        if (line.startsWith("URL: ")) {
+            url = line.slice(5).trim();
+            const classification = classifyResearchResult(query, title, url);
+            output.push("[" + classification + "] " + title);
+            output.push("URL: " + url);
+            output.push("");
+        }
+    }
+
+    return output.length ? output.join("\n") : "No structured result titles/URLs detected.";
+}
+function saveResearchEntry(query, result) {
+    const state = loadJson("cofounder-state.json", {});
+    if (!Array.isArray(state.research)) state.research = [];
+
+    state.research.push({
+        query,
+        result,
+        status: "UNVERIFIED",
+        createdAt: new Date().toISOString()
+    });
+
+    saveJson("cofounder-state.json", state);
+}
+function webResearch(query) {
+    return new Promise((resolve, reject) => {
+        const args = [
+            "/c",
+            "mcporter",
+            "call",
+            "exa.web_search_exa",
+            "query=" + query,
+            "numResults=5",
+            "objective=Find reliable current information relevant to the query. Return useful facts and sources for Cofounder research only."
+        ];
+
+        exec("cmd.exe " + args.map(arg => `"${arg.replace(/"/g, '""')}"`).join(" "), (error, stdout, stderr) => {
+            if (error) {
+                reject(new Error(stderr || error.message));
+                return;
+            }
+
+            resolve(stdout);
+        });
+    });
+}
 // --------------------------------------------------
 // MEMORY
 // --------------------------------------------------
@@ -142,7 +211,7 @@ function addReminder(message, time) {
     saveJson(remindersFile, reminders);
 
     console.log(
-        `JARVIS > Reminder saved: ${message} â€” ${new Date(time).toLocaleString()}`
+        `JARVIS > Reminder saved: ${message} — ${new Date(time).toLocaleString()}`
     );
 }
 
@@ -160,7 +229,7 @@ function showReminders() {
         const status = reminder.fired ? "FIRED" : "OPEN";
 
         console.log(
-            `${index + 1}. [${status}] ${reminder.message} â€” ${new Date(
+            `${index + 1}. [${status}] ${reminder.message} — ${new Date(
                 reminderTime
             ).toLocaleString()}`
         );
@@ -173,7 +242,7 @@ function checkReminders() {
 
         if (!reminder.fired && reminderTime && Date.now() >= reminderTime) {
             console.log(
-                `\nðŸ”” JARVIS REMINDER: ${reminder.message}\n`
+                `\n🔔 JARVIS REMINDER: ${reminder.message}\n`
             );
 
             reminder.fired = true;
@@ -454,7 +523,7 @@ function addRevenue(amount, description) {
     saveJson(businessFile, business);
 
     console.log(
-        `JARVIS > Revenue recorded: ${numericAmount} â€” ${
+        `JARVIS > Revenue recorded: ${numericAmount} — ${
             description || "No description"
         }`
     );
@@ -475,7 +544,7 @@ function showRevenue() {
         total += Number(item.amount) || 0;
 
         console.log(
-            `${index + 1}. ${item.amount} â€” ${
+            `${index + 1}. ${item.amount} — ${
                 item.description || "No description"
             }`
         );
@@ -485,7 +554,7 @@ function showRevenue() {
 }
 
 // --------------------------------------------------
-// STEP 15 â€” ACTION BRAIN
+// STEP 15 — ACTION BRAIN
 // --------------------------------------------------
 
 function showActionBrain() {
@@ -596,7 +665,7 @@ function showBusinessPriorities() {
 }
 
 // --------------------------------------------------
-// STEP 16 â€” ZAYZANA OPERATING BRAIN
+// STEP 16 — ZAYZANA OPERATING BRAIN
 // --------------------------------------------------
 
 function showOperatingBrain() {
@@ -737,7 +806,7 @@ function showOperatingBrain() {
 }
 
 // --------------------------------------------------
-// STEP 17 â€” OPPORTUNITY ACTION BRAIN
+// STEP 17 — OPPORTUNITY ACTION BRAIN
 // --------------------------------------------------
 
 function showOpportunityAction() {
@@ -868,21 +937,21 @@ function showZayzanaFocus() {
 
     if (openFollowUps.length > 0) {
         console.log(
-            `CURRENT FOCUS: Follow-up â€” ${openFollowUps[0].text}`
+            `CURRENT FOCUS: Follow-up — ${openFollowUps[0].text}`
         );
         return;
     }
 
     if (openProspects.length > 0) {
         console.log(
-            `CURRENT FOCUS: Prospect â€” ${openProspects[0].name}`
+            `CURRENT FOCUS: Prospect — ${openProspects[0].name}`
         );
         return;
     }
 
     if (openOpportunities.length > 0) {
         console.log(
-            `CURRENT FOCUS: Opportunity â€” ${openOpportunities[0].text}`
+            `CURRENT FOCUS: Opportunity — ${openOpportunities[0].text}`
         );
         return;
     }
@@ -893,7 +962,7 @@ function showZayzanaFocus() {
 }
 
 // --------------------------------------------------
-// STEP 18 â€” PROSPECT INTELLIGENCE
+// STEP 18 — PROSPECT INTELLIGENCE
 // --------------------------------------------------
 
 function showProspectIntelligence() {
@@ -948,7 +1017,7 @@ function showProspectIntelligence() {
         );
     } else {
         console.log(
-            "INSUFFICIENT INFORMATION â€” do not assume the prospect's problem."
+            "INSUFFICIENT INFORMATION — do not assume the prospect's problem."
         );
     }
 
@@ -968,7 +1037,7 @@ function showProspectIntelligence() {
     );
 
     console.log("\nJARVIS RULE");
-    console.log("-----------");
+    console.log("--------------------");
     console.log(
         "Do not invent facts about the prospect. Discover first, propose second."
     );
@@ -976,7 +1045,7 @@ function showProspectIntelligence() {
 
 // --------------------------------------------------
  // --------------------------------------------------
- // STEP 19 â€” PROSPECT DISCOVERY
+ // STEP 19 — PROSPECT DISCOVERY
  // --------------------------------------------------
 
  function showProspectWorkspace() {
@@ -1284,7 +1353,7 @@ function showProspectDiscovery() {
      console.log("7. When would you want this solved?");
 
      console.log("\nJARVIS RULE");
-     console.log("-----------");
+     console.log("--------------------");
      console.log("Discover first. Qualify second. Recommend third. Execute only after Zayn approves.");
  }
 
@@ -1406,7 +1475,7 @@ function decide(input) {
 
         if (projectKey) {
             console.log(
-                `Decision: WORK_ON â†’ ${projectKey}`
+                `Decision: WORK_ON → ${projectKey}`
             );
 
             console.log(
@@ -1441,6 +1510,62 @@ function decide(input) {
 function handleCommand(input) {
     const trimmed = input.trim();
     const lower = trimmed.toLowerCase();
+
+    if (lower === "research-latest") {
+        const state = loadJson("cofounder-state.json", {});
+        const latest = Array.isArray(state.research) ? state.research.at(-1) : null;
+
+        console.log("\nJARVIS LATEST RESEARCH");
+        console.log("---------------------");
+
+        if (!latest) {
+            console.log("No saved research sessions.");
+            return;
+        }
+
+        console.log("Query: " + latest.query);
+        console.log("Status: " + latest.status);
+        console.log("Created: " + latest.createdAt);
+        console.log("\nRESULTS");
+        console.log("-------");
+        console.log(latest.result);
+        return;
+    }
+
+    if (lower.startsWith("research ")) {
+        const query = trimmed.slice("research ".length).trim();
+
+        if (!query) {
+            console.log("JARVIS > Please provide a research query.");
+            return;
+        }
+
+        console.log("\nJARVIS WEB RESEARCH");
+        console.log("------------------");
+        console.log("Query: " + query);
+        console.log("Research only. No external action will be taken.");
+
+        webResearch(query)
+            .then(result => {
+                console.log("\nEXA RESEARCH RESULTS");
+                console.log("--------------------");
+                console.log("STATUS: UNVERIFIED WEB RESEARCH");
+                console.log("Use these findings for discovery only. Do not treat them as confirmed prospect facts.");
+                console.log("");
+                console.log(formatResearchClassification(query, result));
+                console.log("\nFULL RAW RESULTS");
+                console.log("-----------------");
+                console.log(result);
+                saveResearchEntry(query, result);
+            })
+            .catch(error => {
+                console.log("\nRESEARCH ERROR");
+                console.log("--------------");
+                console.log(error.message);
+            });
+
+        return;
+    }
     if (lower.startsWith("record decision ")) {
         const decisionText = trimmed.slice("record decision ".length).trim();
         const stateFile = "cofounder-state.json";
@@ -2479,7 +2604,7 @@ if (input === "commercial brain" || input === "commercial") { commercialBrain.an
         return true;
     }
 
-    // STEP 19 â€” DISCOVERY CAPTURE
+    // STEP 19 — DISCOVERY CAPTURE
     if (lower.startsWith("discovery ")) {
         const parts = trimmed.split(" ");
         const field = parts[1];
@@ -2552,7 +2677,7 @@ if (input === "commercial brain" || input === "commercial") { commercialBrain.an
         console.log(`JARVIS > Discovery saved: ${fieldMap[field]}`);
         return true;
     }
-    // STEP 19 â€” PROSPECT QUALIFICATION
+    // STEP 19 — PROSPECT QUALIFICATION
     if (
         lower === "prospect qualification" ||
         lower === "qualify prospect" ||
@@ -2623,12 +2748,12 @@ if (input === "commercial brain" || input === "commercial") { commercialBrain.an
         }
 
         console.log("\nJARVIS RULE");
-        console.log("-----------");
+        console.log("--------------------");
         console.log("Qualification must be based on recorded evidence. Do not invent missing information.");
 
         return true;
     }
-    // STEP 19 â€” PROSPECT RECOMMENDATION
+    // STEP 19 — PROSPECT RECOMMENDATION
     if (
         lower === "prospect recommendation" ||
         lower === "recommend for prospect" ||
@@ -2683,11 +2808,11 @@ if (input === "commercial brain" || input === "commercial") { commercialBrain.an
 
             console.log("\nPOSSIBLE AREAS TO INVESTIGATE");
             console.log("-----------------------------");
-            console.log("â€¢ AI automation");
-            console.log("â€¢ Business process automation");
-            console.log("â€¢ Customer support tools");
-            console.log("â€¢ Internal tools");
-            console.log("â€¢ Website or lightweight software");
+            console.log("• AI automation");
+            console.log("• Business process automation");
+            console.log("• Customer support tools");
+            console.log("• Internal tools");
+            console.log("• Website or lightweight software");
 
             console.log("\nRECOMMENDATION");
             console.log("--------------");
@@ -2720,7 +2845,7 @@ if (input === "commercial brain" || input === "commercial") { commercialBrain.an
         }
 
         console.log("\nJARVIS RULE");
-        console.log("-----------");
+        console.log("--------------------");
         console.log("Evidence first. Recommendation second. Zayn approval before action.");
 
         return true;
@@ -3211,6 +3336,17 @@ const commercialOffers = [
         outcome: "Create a simple digital workflow around a real business need"
     }
 ];
+
+
+
+
+
+
+
+
+
+
+
 
 
 
