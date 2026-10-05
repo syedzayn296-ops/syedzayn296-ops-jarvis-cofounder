@@ -1597,6 +1597,79 @@ function showWorldModel() {
         console.log("No immediate signals detected.");
     }
 }
+function evaluateHeartbeat() {
+    const world = worldModel();
+    const signals = [];
+
+    if (world.business.followUps > 0) {
+        signals.push({
+            priority: 100,
+            type: "FOLLOW_UP",
+            message: `${world.business.followUps} open follow-up(s) require attention.`
+        });
+    }
+
+    const state = loadJson("cofounder-state.json", {});
+    const activeApprovals = Array.isArray(state.approvals) ? state.approvals.filter(a => a.status === "ACTIVE") : [];
+
+    if (activeApprovals.length > 0) {
+        signals.push({
+            priority: 90,
+            type: "APPROVAL",
+            message: `${activeApprovals.length} active approval(s) are recorded.`
+        });
+    }
+
+    if (world.priorities.commercialPipelineEmpty) {
+        signals.push({
+            priority: 70,
+            type: "COMMERCIAL",
+            message: "Commercial pipeline is currently empty."
+        });
+    }
+
+    if (world.priorities.researchAvailable) {
+        signals.push({
+            priority: 40,
+            type: "RESEARCH",
+            message: "Unverified research is available for review."
+        });
+    }
+
+    signals.sort((a, b) => b.priority - a.priority);
+
+    return {
+        generatedAt: new Date().toISOString(),
+        status: signals.length > 0 ? "SIGNALS_FOUND" : "QUIET",
+        signals
+    };
+}
+
+function showHeartbeat() {
+    const heartbeat = evaluateHeartbeat();
+
+    console.log("\nCOFOUNDER HEARTBEAT");
+    console.log("-------------------");
+    console.log(`Generated: ${heartbeat.generatedAt}`);
+    console.log(`Status: ${heartbeat.status}`);
+
+    if (heartbeat.status === "QUIET") {
+        console.log("No materially important signals detected.");
+        console.log("No action taken.");
+        return;
+    }
+
+    console.log("\nPRIORITY SIGNALS");
+    console.log("----------------");
+
+    heartbeat.signals.slice(0, 3).forEach((signal, index) => {
+        console.log(`${index + 1}. [${signal.type}] ${signal.message}`);
+    });
+
+    console.log("\nHEARTBEAT RULE");
+    console.log("This is advisory only. No external action was taken.");
+    console.log("Zayn decides what to act on.");
+}
 // --------------------------------------------------
 // DIRECT COMMANDS
 // --------------------------------------------------
@@ -1604,6 +1677,11 @@ function showWorldModel() {
 function handleCommand(input) {
     const trimmed = input.trim();
     const lower = trimmed.toLowerCase();
+
+    if (lower === "heartbeat" || lower === "cofounder heartbeat") {
+        showHeartbeat();
+        return;
+    }
 
     if (lower === "world" || lower === "world model" || lower === "zayzana world") {
         showWorldModel();
@@ -3435,37 +3513,4 @@ const commercialOffers = [
         outcome: "Create a simple digital workflow around a real business need"
     }
 ];
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
