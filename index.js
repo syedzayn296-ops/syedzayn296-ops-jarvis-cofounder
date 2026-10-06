@@ -2261,6 +2261,7 @@ if (lower === "heartbeat" || lower === "cofounder heartbeat") {
         }
 
         const approval = {
+            approvalId: "approval-" + Date.now() + "-" + Math.random().toString(36).slice(2, 8),
             action: approvalText,
             approvedBy: "Zayn",
             date: new Date().toISOString(),
@@ -2324,6 +2325,7 @@ if (lower === "heartbeat" || lower === "cofounder heartbeat") {
         if (!Array.isArray(state.executions)) state.executions = [];
 
         const execution = {
+            approvalId: approval.approvalId || null,
             action: approval.action,
             approvedBy: approval.approvedBy || "Zayn",
             approvedDate: approval.date || new Date().toISOString(),
@@ -2395,7 +2397,7 @@ if (lower === "heartbeat" || lower === "cofounder heartbeat") {
         execution.verifiedDate = new Date().toISOString();
 
         const approval = Array.isArray(state.approvals)
-            ? state.approvals.find(a => a.action === execution.action && a.status === "EXECUTED")
+            ? state.approvals.find(a => (execution.approvalId && a.approvalId === execution.approvalId) || (!execution.approvalId && a.action === execution.action && a.status === "EXECUTED"))
             : null;
 
         if (approval) {
@@ -2872,7 +2874,7 @@ if (input === "run cycle" || input === "cycle") {
         const recordedExecutions = activeApprovals.filter(approval =>
             executions.some(execution =>
                 execution.status === "INTERNAL_ACTION_RECORDED" &&
-                execution.action === approval.action
+                (execution.approvalId && execution.approvalId === approval.approvalId) || (!execution.approvalId && execution.action === approval.action)
             )
         );
 
@@ -2883,7 +2885,7 @@ if (input === "run cycle" || input === "cycle") {
                 console.log("Approved by: " + (a.approvedBy || "Unknown"));
                 const execution = executions.find(e =>
                     e.status === "INTERNAL_ACTION_RECORDED" &&
-                    e.action === a.action
+                    (e.approvalId && e.approvalId === a.approvalId) || (!e.approvalId && e.action === a.action)
                 );
                 console.log("Executed by: " + (execution?.executedBy || "Unknown"));
                 console.log("Execution date: " + (execution?.executedDate || "Unknown"));
