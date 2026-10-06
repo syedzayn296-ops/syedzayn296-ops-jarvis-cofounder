@@ -1,4 +1,4 @@
-﻿const test = require('node:test');
+const test = require('node:test');
 const assert = require('node:assert/strict');
 const { spawnSync } = require('node:child_process');
 const fs = require('node:fs');
@@ -450,5 +450,64 @@ test('commercial assessment can pursue when evidence and strategic fit are stron
   assert.equal(result.error?.code, 'ETIMEDOUT');
   assert.match(result.stdout ?? '', /JUDGEMENT: PURSUE/);
   assert.match(result.stdout ?? '', /STRATEGIC FIT:/);
+  assert.match(result.stdout ?? '', /External action: BLOCKED/);
+});
+
+test('prospect intelligence rejects weak research as insufficient evidence', () => {
+  const { result } = runIsolatedJarvis(
+    prospectFixture(),
+    'prospect intelligence\n'
+  );
+
+  assert.equal(result.error?.code, 'ETIMEDOUT');
+  assert.match(result.stdout ?? '', /EVIDENCE: INSUFFICIENT/);
+  assert.match(result.stdout ?? '', /JUDGEMENT: NOT ENOUGH EVIDENCE/);
+  assert.match(result.stdout ?? '', /External action: BLOCKED/);
+});
+
+test('prospect intelligence distinguishes commercial signals from hypotheses', () => {
+  const { result } = runIsolatedJarvis(
+    prospectFixture(),
+    'prospect intelligence\n',
+    {
+      research: [
+        {
+          query: 'Example Plumbing Durban',
+          result: 'Website: 24/7 emergency plumbing. WhatsApp enquiries available. Residential and commercial plumbing services.',
+          status: 'UNVERIFIED',
+          createdAt: new Date().toISOString()
+        }
+      ]
+    }
+  );
+
+  assert.equal(result.error?.code, 'ETIMEDOUT');
+  assert.match(result.stdout ?? '', /COMMERCIAL SIGNALS:/);
+  assert.match(result.stdout ?? '', /HYPOTHESES:/);
+  assert.match(result.stdout ?? '', /UNKNOWN/);
+  assert.match(result.stdout ?? '', /JUDGEMENT: INVESTIGATE/);
+  assert.match(result.stdout ?? '', /External action: BLOCKED/);
+});
+
+test('prospect intelligence does not treat an unverified hypothesis as confirmed fact', () => {
+  const { result } = runIsolatedJarvis(
+    prospectFixture(),
+    'prospect intelligence\n',
+    {
+      research: [
+        {
+          query: 'Example Plumbing Durban',
+          result: 'Website: WhatsApp enquiries available.',
+          status: 'UNVERIFIED',
+          createdAt: new Date().toISOString()
+        }
+      ]
+    }
+  );
+
+  assert.equal(result.error?.code, 'ETIMEDOUT');
+  assert.match(result.stdout ?? '', /HYPOTHESES:/);
+  assert.doesNotMatch(result.stdout ?? '', /FACT:.*losing leads/i);
+  assert.doesNotMatch(result.stdout ?? '', /FACT:.*manual enquiry handling/i);
   assert.match(result.stdout ?? '', /External action: BLOCKED/);
 });

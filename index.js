@@ -1121,6 +1121,59 @@ function showProspectIntelligence() {
         "Ask the prospect what business process is currently costing them the most time, money or repeated manual effort."
     );
 
+    const state = loadJson("cofounder-state.json", {});
+    const research = Array.isArray(state.research) ? state.research : [];
+    const prospectResearch = research.filter((entry) =>
+        true
+    );
+
+    console.log("\nEVIDENCE");
+    console.log("--------");
+    if (prospectResearch.length === 0) {
+        console.log("EVIDENCE: INSUFFICIENT");
+    } else {
+        prospectResearch.slice(-5).forEach((entry) => {
+            console.log("- " + (entry.result || entry.query || "Research available"));
+        });
+    }
+
+    const researchText = prospectResearch
+        .map((entry) => `${entry.query || ""}\n${entry.result || ""}`)
+        .join("\n")
+        .toLowerCase();
+
+    const matchedSignals = [
+        "website",
+        "whatsapp",
+        "24/7",
+        "customer enquiries",
+        "customer support",
+        "digital"
+    ].filter((term) => researchText.includes(term));
+
+    console.log("\nCOMMERCIAL SIGNALS:");
+    if (matchedSignals.length === 0) {
+        console.log("UNKNOWN");
+    } else {
+        matchedSignals.forEach((signal) => console.log("- " + signal));
+    }
+
+    console.log("\nHYPOTHESES:");
+    if (researchText.includes("whatsapp")) {
+        console.log("- Manual enquiry handling may consume staff time (HYPOTHESIS)");
+        console.log("- Lead follow-up may be inconsistent (HYPOTHESIS)");
+    } else {
+        console.log("UNKNOWN");
+    }
+
+    console.log("\nUNKNOWN:");
+    console.log("- Budget");
+    console.log("- Timeline");
+    console.log("- Confirmed business impact");
+    console.log("- Expected return");
+
+    console.log("\nJUDGEMENT: " + (prospectResearch.length === 0 ? "NOT ENOUGH EVIDENCE" : "INVESTIGATE"));
+    console.log("External action: BLOCKED");
     console.log("\nJARVIS RULE");
     console.log("--------------------");
     console.log(
@@ -1437,7 +1490,60 @@ function showProspectDiscovery() {
      console.log("6. Is there a budget or commercial constraint?");
      console.log("7. When would you want this solved?");
 
-     console.log("\nJARVIS RULE");
+     const state = loadJson("cofounder-state.json", {});
+    const research = Array.isArray(state.research) ? state.research : [];
+    const prospectResearch = research.filter((entry) =>
+        true
+    );
+
+    console.log("\nEVIDENCE");
+    console.log("--------");
+    if (prospectResearch.length === 0) {
+        console.log("EVIDENCE: INSUFFICIENT");
+    } else {
+        prospectResearch.slice(-5).forEach((entry) => {
+            console.log("- " + (entry.result || entry.query || "Research available"));
+        });
+    }
+
+    const researchText = prospectResearch
+        .map((entry) => `${entry.query || ""}\n${entry.result || ""}`)
+        .join("\n")
+        .toLowerCase();
+
+    const matchedSignals = [
+        "website",
+        "whatsapp",
+        "24/7",
+        "customer enquiries",
+        "customer support",
+        "digital"
+    ].filter((term) => researchText.includes(term));
+
+    console.log("\nCOMMERCIAL SIGNALS:");
+    if (matchedSignals.length === 0) {
+        console.log("UNKNOWN");
+    } else {
+        matchedSignals.forEach((signal) => console.log("- " + signal));
+    }
+
+    console.log("\nHYPOTHESES:");
+    if (researchText.includes("whatsapp")) {
+        console.log("- Manual enquiry handling may consume staff time (HYPOTHESIS)");
+        console.log("- Lead follow-up may be inconsistent (HYPOTHESIS)");
+    } else {
+        console.log("UNKNOWN");
+    }
+
+    console.log("\nUNKNOWN:");
+    console.log("- Budget");
+    console.log("- Timeline");
+    console.log("- Confirmed business impact");
+    console.log("- Expected return");
+
+    console.log("\nJUDGEMENT: " + (prospectResearch.length === 0 ? "NOT ENOUGH EVIDENCE" : "INVESTIGATE"));
+    console.log("External action: BLOCKED");
+    console.log("\nJARVIS RULE");
      console.log("--------------------");
      console.log("Discover first. Qualify second. Recommend third. Execute only after Zayn approves.");
  }
@@ -3197,7 +3303,60 @@ if (input === "commercial brain" || input === "commercial") { commercialBrain.an
             });
         }
 
-        console.log("\nJARVIS RULE");
+        const state = loadJson("cofounder-state.json", {});
+    const research = Array.isArray(state.research) ? state.research : [];
+    const prospectResearch = research.filter((entry) =>
+        true
+    );
+
+    console.log("\nEVIDENCE");
+    console.log("--------");
+    if (prospectResearch.length === 0) {
+        console.log("EVIDENCE: INSUFFICIENT");
+    } else {
+        prospectResearch.slice(-5).forEach((entry) => {
+            console.log("- " + (entry.result || entry.query || "Research available"));
+        });
+    }
+
+    const researchText = prospectResearch
+        .map((entry) => `${entry.query || ""}\n${entry.result || ""}`)
+        .join("\n")
+        .toLowerCase();
+
+    const matchedSignals = [
+        "website",
+        "whatsapp",
+        "24/7",
+        "customer enquiries",
+        "customer support",
+        "digital"
+    ].filter((term) => researchText.includes(term));
+
+    console.log("\nCOMMERCIAL SIGNALS:");
+    if (matchedSignals.length === 0) {
+        console.log("UNKNOWN");
+    } else {
+        matchedSignals.forEach((signal) => console.log("- " + signal));
+    }
+
+    console.log("\nHYPOTHESES:");
+    if (researchText.includes("whatsapp")) {
+        console.log("- Manual enquiry handling may consume staff time (HYPOTHESIS)");
+        console.log("- Lead follow-up may be inconsistent (HYPOTHESIS)");
+    } else {
+        console.log("UNKNOWN");
+    }
+
+    console.log("\nUNKNOWN:");
+    console.log("- Budget");
+    console.log("- Timeline");
+    console.log("- Confirmed business impact");
+    console.log("- Expected return");
+
+    console.log("\nJUDGEMENT: " + (prospectResearch.length === 0 ? "NOT ENOUGH EVIDENCE" : "INVESTIGATE"));
+    console.log("External action: BLOCKED");
+    console.log("\nJARVIS RULE");
         console.log("--------------------");
         console.log("Qualification must be based on recorded evidence. Do not invent missing information.");
 
@@ -3294,7 +3453,60 @@ if (input === "commercial brain" || input === "commercial") { commercialBrain.an
             console.log("No proposal or external action should occur without Zayn's approval.");
         }
 
-        console.log("\nJARVIS RULE");
+        const state = loadJson("cofounder-state.json", {});
+    const research = Array.isArray(state.research) ? state.research : [];
+    const prospectResearch = research.filter((entry) =>
+        true
+    );
+
+    console.log("\nEVIDENCE");
+    console.log("--------");
+    if (prospectResearch.length === 0) {
+        console.log("EVIDENCE: INSUFFICIENT");
+    } else {
+        prospectResearch.slice(-5).forEach((entry) => {
+            console.log("- " + (entry.result || entry.query || "Research available"));
+        });
+    }
+
+    const researchText = prospectResearch
+        .map((entry) => `${entry.query || ""}\n${entry.result || ""}`)
+        .join("\n")
+        .toLowerCase();
+
+    const matchedSignals = [
+        "website",
+        "whatsapp",
+        "24/7",
+        "customer enquiries",
+        "customer support",
+        "digital"
+    ].filter((term) => researchText.includes(term));
+
+    console.log("\nCOMMERCIAL SIGNALS:");
+    if (matchedSignals.length === 0) {
+        console.log("UNKNOWN");
+    } else {
+        matchedSignals.forEach((signal) => console.log("- " + signal));
+    }
+
+    console.log("\nHYPOTHESES:");
+    if (researchText.includes("whatsapp")) {
+        console.log("- Manual enquiry handling may consume staff time (HYPOTHESIS)");
+        console.log("- Lead follow-up may be inconsistent (HYPOTHESIS)");
+    } else {
+        console.log("UNKNOWN");
+    }
+
+    console.log("\nUNKNOWN:");
+    console.log("- Budget");
+    console.log("- Timeline");
+    console.log("- Confirmed business impact");
+    console.log("- Expected return");
+
+    console.log("\nJUDGEMENT: " + (prospectResearch.length === 0 ? "NOT ENOUGH EVIDENCE" : "INVESTIGATE"));
+    console.log("External action: BLOCKED");
+    console.log("\nJARVIS RULE");
         console.log("--------------------");
         console.log("Evidence first. Recommendation second. Zayn approval before action.");
 
