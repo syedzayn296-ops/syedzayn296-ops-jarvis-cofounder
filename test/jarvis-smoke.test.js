@@ -398,3 +398,57 @@ test('cofounder carries a recorded lesson into a future recommendation', () => {
 
 
 
+
+test('commercial assessment refuses to pursue when evidence is insufficient', () => {
+  const { result } = runIsolatedJarvis(
+    prospectFixture({
+      problem: 'Manual customer follow-up is consuming staff time'
+    }),
+    'commercial assessment\n'
+  );
+
+  assert.equal(result.error?.code, 'ETIMEDOUT');
+  assert.match(result.stdout ?? '', /JUDGEMENT: NOT ENOUGH EVIDENCE/);
+  assert.match(result.stdout ?? '', /EVIDENCE: INSUFFICIENT/);
+  assert.match(result.stdout ?? '', /External action: BLOCKED/);
+});
+
+test('commercial assessment investigates when value is clear but money is unknown', () => {
+  const { result } = runIsolatedJarvis(
+    prospectFixture({
+      problem: 'Manual customer follow-up is consuming staff time',
+      impact: 'Staff spend hours each week chasing responses',
+      currentSolution: 'Staff use spreadsheets and manual messages',
+      desiredOutcome: 'Automate routine follow-up and tracking',
+      decisionMaker: 'Operations manager'
+    }),
+    'commercial assessment\n'
+  );
+
+  assert.equal(result.error?.code, 'ETIMEDOUT');
+  assert.match(result.stdout ?? '', /JUDGEMENT: INVESTIGATE/);
+  assert.match(result.stdout ?? '', /MONEY: UNKNOWN/);
+  assert.match(result.stdout ?? '', /RETURN: UNKNOWN/);
+  assert.match(result.stdout ?? '', /External action: BLOCKED/);
+});
+
+test('commercial assessment can pursue when evidence and strategic fit are strong', () => {
+  const { result } = runIsolatedJarvis(
+    prospectFixture({
+      problem: 'Manual customer follow-up is consuming staff time',
+      impact: 'Staff spend 10 hours per week chasing responses',
+      currentSolution: 'Staff use spreadsheets and manual messages',
+      desiredOutcome: 'Automate routine follow-up and tracking',
+      decisionMaker: 'Operations manager',
+      budget: 'R15000',
+      timeline: 'Within 30 days',
+      strategicFit: 'AI automation matches Zayzana commercial focus'
+    }),
+    'commercial assessment\n'
+  );
+
+  assert.equal(result.error?.code, 'ETIMEDOUT');
+  assert.match(result.stdout ?? '', /JUDGEMENT: PURSUE/);
+  assert.match(result.stdout ?? '', /STRATEGIC FIT:/);
+  assert.match(result.stdout ?? '', /External action: BLOCKED/);
+});

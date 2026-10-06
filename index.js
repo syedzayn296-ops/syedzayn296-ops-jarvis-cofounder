@@ -2906,6 +2906,7 @@ if (input === "run cycle" || input === "cycle") {
     console.log("");
     return;
 }
+if (input === "commercial assessment") { commercialAssessment(); return; }
 if (input === "commercial brain" || input === "commercial") { commercialBrain.analyze(); return; }
 
   // MEMORY
@@ -3863,6 +3864,117 @@ function showActionQueue() {
 
 
 
+
+
+
+
+function commercialAssessment() {
+    const business = JSON.parse(fs.readFileSync("business.json", "utf8"));
+    const prospects = Array.isArray(business.prospects) ? business.prospects : [];
+    const prospect = prospects.find(p => p.status !== "CLOSED") || null;
+
+    console.log("");
+    console.log("JARVIS COMMERCIAL ASSESSMENT");
+    console.log("============================");
+
+    if (!prospect) {
+        console.log("CUSTOMER: UNKNOWN");
+        console.log("VALUE: UNKNOWN");
+        console.log("MONEY: UNKNOWN");
+        console.log("EVIDENCE: INSUFFICIENT");
+        console.log("EFFORT: UNKNOWN");
+        console.log("RETURN: UNKNOWN");
+        console.log("STRATEGIC FIT: UNKNOWN");
+        console.log("RISK: HIGH");
+        console.log("JUDGEMENT: NOT ENOUGH EVIDENCE");
+        console.log("NEXT ACTION: Identify and record a real commercial prospect.");
+        console.log("External action: BLOCKED");
+        console.log("");
+        return;
+    }
+
+    const discovery = prospect.discovery || {};
+
+    const hasProblem = Boolean(discovery.problem);
+    const hasImpact = Boolean(discovery.impact);
+    const hasOutcome = Boolean(discovery.desiredOutcome);
+    const hasDecisionMaker = Boolean(discovery.decisionMaker);
+    const hasBudget = Boolean(discovery.budget);
+    const hasTimeline = Boolean(discovery.timeline);
+    const hasStrategicFit = Boolean(discovery.strategicFit);
+
+    const coreEvidence = [
+        hasProblem,
+        hasImpact,
+        hasOutcome,
+        hasDecisionMaker
+    ].filter(Boolean).length;
+
+    let evidenceStatus = "INSUFFICIENT";
+
+    if (coreEvidence === 4) {
+        evidenceStatus = "STRONG";
+    } else if (coreEvidence >= 2) {
+        evidenceStatus = "PARTIAL";
+    }
+
+    let money = "UNKNOWN";
+    if (hasBudget) {
+        money = discovery.budget;
+    }
+
+    let returnAssessment = "UNKNOWN";
+
+    let effort = "UNKNOWN";
+    if (hasProblem && hasOutcome) {
+        effort =
+            "Potential Zayzana solution effort requires further scoping before a reliable estimate.";
+    }
+
+    let strategicFit = hasStrategicFit
+        ? discovery.strategicFit
+        : "Not explicitly established";
+
+    let risk = "HIGH";
+
+    if (evidenceStatus === "STRONG" && hasBudget && hasTimeline && hasStrategicFit) {
+        risk = "MEDIUM";
+    } else if (evidenceStatus === "PARTIAL") {
+        risk = "HIGH";
+    }
+
+    let judgement = "NOT ENOUGH EVIDENCE";
+    let nextAction = "Complete the missing commercial discovery before deciding whether to pursue.";
+
+    if (evidenceStatus === "STRONG") {
+        if (!hasBudget || !hasTimeline) {
+            judgement = "INVESTIGATE";
+            nextAction = "Confirm commercial constraints, especially budget and timeline, before recommending pursuit.";
+        } else if (!hasStrategicFit) {
+            judgement = "INVESTIGATE";
+            nextAction = "Establish whether the opportunity fits Zayzana's current commercial strategy.";
+        } else {
+            judgement = "PURSUE";
+            nextAction = "Prepare the opportunity for Zayn's review and approval; do not contact the prospect yet.";
+        }
+    } else if (evidenceStatus === "PARTIAL") {
+        judgement = "INVESTIGATE";
+        nextAction = "Strengthen the evidence around the business problem, impact, desired outcome and decision authority.";
+    }
+
+    console.log("CUSTOMER: " + (prospect.name || "Unknown"));
+    console.log("VALUE: " + (discovery.desiredOutcome || "UNKNOWN"));
+    console.log("MONEY: " + money);
+    console.log("EVIDENCE: " + evidenceStatus);
+    console.log("EFFORT: " + effort);
+    console.log("RETURN: " + returnAssessment);
+    console.log("STRATEGIC FIT: " + strategicFit);
+    console.log("RISK: " + risk);
+    console.log("JUDGEMENT: " + judgement);
+    console.log("NEXT ACTION: " + nextAction);
+    console.log("External action: BLOCKED");
+    console.log("");
+}
 
 
 
