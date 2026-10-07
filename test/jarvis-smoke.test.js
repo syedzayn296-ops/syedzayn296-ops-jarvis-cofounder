@@ -233,6 +233,55 @@ test('cofounder execution gate executes only an active approval and records the 
   assert.equal(state.executions[0].executedBy, 'JARVIS');
 });
 
+test('cofounder marks a new execution as pending verification', () => {
+  const { result, state } = runIsolatedJarvis(
+    prospectFixture(),
+    'approve recommendation complete prospect qualification before contracting\nexecute approved 1\n'
+  );
+
+  assert.equal(result.error?.code, 'ETIMEDOUT');
+  assert.equal(state.executions.length, 1);
+  assert.equal(state.executions[0].verificationStatus, 'PENDING');
+  assert.equal(state.approvals[0].verificationStatus, 'PENDING');
+});
+test('cofounder verifies a completed execution', () => {
+  const { result, state } = runIsolatedJarvis(
+    prospectFixture(),
+    'approve recommendation complete prospect qualification before contracting\nexecute approved 1\nverify execution 1 verified\nverify execution 1 verified\n'
+  );
+
+  assert.equal(result.error?.code, 'ETIMEDOUT');
+  assert.match(result.stdout, /COFOUNDER EXECUTION VERIFIED/);
+  assert.match(result.stdout, /Verification: VERIFIED/);
+  assert.match(result.stdout, /This execution is not pending verification/);
+  assert.equal(state.executions.length, 1);
+  assert.equal(state.executions[0].verificationStatus, 'VERIFIED');
+  assert.equal(state.approvals[0].verificationStatus, 'VERIFIED');
+});
+test('cofounder records a failed execution verification', () => {
+  const { result, state } = runIsolatedJarvis(
+    prospectFixture(),
+    'approve recommendation complete prospect qualification before contracting\nexecute approved 1\nverify execution 1 failed\n'
+  );
+
+  assert.equal(result.error?.code, 'ETIMEDOUT');
+  assert.match(result.stdout, /Verification: FAILED/);
+  assert.equal(state.executions.length, 1);
+  assert.equal(state.executions[0].verificationStatus, 'FAILED');
+  assert.equal(state.approvals[0].verificationStatus, 'FAILED');
+});
+test('cofounder records an unknown execution verification', () => {
+  const { result, state } = runIsolatedJarvis(
+    prospectFixture(),
+    'approve recommendation complete prospect qualification before contracting\nexecute approved 1\nverify execution 1 unknown\n'
+  );
+
+  assert.equal(result.error?.code, 'ETIMEDOUT');
+  assert.match(result.stdout, /Verification: UNKNOWN/);
+  assert.equal(state.executions.length, 1);
+  assert.equal(state.executions[0].verificationStatus, 'UNKNOWN');
+  assert.equal(state.approvals[0].verificationStatus, 'UNKNOWN');
+});
 test('cofounder blocks execution when an approval has already been executed', () => {
   const { result, state } = runIsolatedJarvis(
     prospectFixture(),
@@ -345,4 +394,120 @@ test('cofounder carries a recorded lesson into a future recommendation', () => {
   assert.match(result.stdout ?? '', /JARVIS DECISION LESSON RECORDED/);
   assert.match(result.stdout ?? '', /Focus first on: complete prospect qualification before contracting/);
   assert.match(result.stdout ?? '', /LEARNING SIGNAL: A past decision lesson indicates qualification should happen before contracting/);
+});
+
+
+
+
+test('commercial assessment refuses to pursue when evidence is insufficient', () => {
+  const { result } = runIsolatedJarvis(
+    prospectFixture({
+      problem: 'Manual customer follow-up is consuming staff time'
+    }),
+    'commercial assessment\n'
+  );
+
+  assert.equal(result.error?.code, 'ETIMEDOUT');
+  assert.match(result.stdout ?? '', /JUDGEMENT: NOT ENOUGH EVIDENCE/);
+  assert.match(result.stdout ?? '', /EVIDENCE: INSUFFICIENT/);
+  assert.match(result.stdout ?? '', /External action: BLOCKED/);
+});
+
+test('commercial assessment investigates when value is clear but money is unknown', () => {
+  const { result } = runIsolatedJarvis(
+    prospectFixture({
+      problem: 'Manual customer follow-up is consuming staff time',
+      impact: 'Staff spend hours each week chasing responses',
+      currentSolution: 'Staff use spreadsheets and manual messages',
+      desiredOutcome: 'Automate routine follow-up and tracking',
+      decisionMaker: 'Operations manager'
+    }),
+    'commercial assessment\n'
+  );
+
+  assert.equal(result.error?.code, 'ETIMEDOUT');
+  assert.match(result.stdout ?? '', /JUDGEMENT: INVESTIGATE/);
+  assert.match(result.stdout ?? '', /MONEY: UNKNOWN/);
+  assert.match(result.stdout ?? '', /RETURN: UNKNOWN/);
+  assert.match(result.stdout ?? '', /External action: BLOCKED/);
+});
+
+test('commercial assessment can pursue when evidence and strategic fit are strong', () => {
+  const { result } = runIsolatedJarvis(
+    prospectFixture({
+      problem: 'Manual customer follow-up is consuming staff time',
+      impact: 'Staff spend 10 hours per week chasing responses',
+      currentSolution: 'Staff use spreadsheets and manual messages',
+      desiredOutcome: 'Automate routine follow-up and tracking',
+      decisionMaker: 'Operations manager',
+      budget: 'R15000',
+      timeline: 'Within 30 days',
+      strategicFit: 'AI automation matches Zayzana commercial focus'
+    }),
+    'commercial assessment\n'
+  );
+
+  assert.equal(result.error?.code, 'ETIMEDOUT');
+  assert.match(result.stdout ?? '', /JUDGEMENT: PURSUE/);
+  assert.match(result.stdout ?? '', /STRATEGIC FIT:/);
+  assert.match(result.stdout ?? '', /External action: BLOCKED/);
+});
+
+test('prospect intelligence rejects weak research as insufficient evidence', () => {
+  const { result } = runIsolatedJarvis(
+    prospectFixture(),
+    'prospect intelligence\n'
+  );
+
+  assert.equal(result.error?.code, 'ETIMEDOUT');
+  assert.match(result.stdout ?? '', /EVIDENCE: INSUFFICIENT/);
+  assert.match(result.stdout ?? '', /JUDGEMENT: NOT ENOUGH EVIDENCE/);
+  assert.match(result.stdout ?? '', /External action: BLOCKED/);
+});
+
+test('prospect intelligence distinguishes commercial signals from hypotheses', () => {
+  const { result } = runIsolatedJarvis(
+    prospectFixture(),
+    'prospect intelligence\n',
+    {
+      research: [
+        {
+          query: 'Example Plumbing Durban',
+          result: 'Website: 24/7 emergency plumbing. WhatsApp enquiries available. Residential and commercial plumbing services.',
+          status: 'UNVERIFIED',
+          createdAt: new Date().toISOString()
+        }
+      ]
+    }
+  );
+
+  assert.equal(result.error?.code, 'ETIMEDOUT');
+  assert.match(result.stdout ?? '', /COMMERCIAL SIGNALS:/);
+  assert.match(result.stdout ?? '', /HYPOTHESES:/);
+  assert.match(result.stdout ?? '', /UNKNOWN/);
+  assert.match(result.stdout ?? '', /JUDGEMENT: INVESTIGATE/);
+  assert.match(result.stdout ?? '', /External action: BLOCKED/);
+});
+
+test('prospect intelligence does not treat an unverified hypothesis as confirmed fact', () => {
+  const { result } = runIsolatedJarvis(
+    prospectFixture(),
+    'prospect intelligence\n',
+    {
+      research: [
+        {
+          query: 'Example Plumbing Durban',
+          result: 'Website: WhatsApp enquiries available.',
+          status: 'UNVERIFIED',
+          createdAt: new Date().toISOString()
+        }
+      ]
+    }
+  );
+
+  assert.equal(result.error?.code, 'ETIMEDOUT');
+  assert.match(result.stdout ?? '', /HYPOTHESES:/);
+  assert.doesNotMatch(result.stdout ?? '', /FACT:.*losing leads/i);
+  assert.doesNotMatch(result.stdout ?? '', /FACT:.*manual enquiry handling/i);
+  assert.match(result.stdout ?? '', /External action: BLOCKED/);
 });
