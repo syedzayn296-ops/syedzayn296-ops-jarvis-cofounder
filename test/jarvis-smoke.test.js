@@ -473,6 +473,7 @@ test('prospect intelligence distinguishes commercial signals from hypotheses', (
       research: [
         {
           query: 'Example Plumbing Durban',
+          prospectName: 'Test prospect',
           result: 'Website: 24/7 emergency plumbing. WhatsApp enquiries available. Residential and commercial plumbing services.',
           status: 'UNVERIFIED',
           createdAt: new Date().toISOString()
@@ -497,6 +498,7 @@ test('prospect intelligence does not treat an unverified hypothesis as confirmed
       research: [
         {
           query: 'Example Plumbing Durban',
+          prospectName: 'Test prospect',
           result: 'Website: WhatsApp enquiries available.',
           status: 'UNVERIFIED',
           createdAt: new Date().toISOString()

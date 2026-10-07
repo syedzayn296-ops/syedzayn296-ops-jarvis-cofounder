@@ -63,13 +63,14 @@ function formatResearchClassification(query, result) {
 
     return output.length ? output.join("\n") : "No structured result titles/URLs detected.";
 }
-function saveResearchEntry(query, result) {
+function saveResearchEntry(query, result, prospectName = null) {
     const state = loadJson("cofounder-state.json", {});
     if (!Array.isArray(state.research)) state.research = [];
 
     state.research.push({
         query,
         result,
+        prospectName,
         status: "UNVERIFIED",
         createdAt: new Date().toISOString()
     });
@@ -1124,7 +1125,7 @@ function showProspectIntelligence() {
     const state = loadJson("cofounder-state.json", {});
     const research = Array.isArray(state.research) ? state.research : [];
     const prospectResearch = research.filter((entry) =>
-        true
+        entry.prospectName === prospect.name
     );
 
     console.log("\nEVIDENCE");
@@ -1493,7 +1494,7 @@ function showProspectDiscovery() {
      const state = loadJson("cofounder-state.json", {});
     const research = Array.isArray(state.research) ? state.research : [];
     const prospectResearch = research.filter((entry) =>
-        true
+        entry.prospectName === prospect.name
     );
 
     console.log("\nEVIDENCE");
@@ -2031,6 +2032,10 @@ if (lower === "heartbeat" || lower === "cofounder heartbeat") {
         console.log("Query: " + query);
         console.log("Research only. No external action will be taken.");
 
+        const researchBusiness = loadJson("business.json", { prospects: [] });
+        const activeResearchProspects = (researchBusiness.prospects || []).filter(p => p.status !== "CLOSED");
+        const researchProspect = activeResearchProspects[0] || null;
+
         webResearch(query)
             .then(result => {
                 console.log("\nEXA RESEARCH RESULTS");
@@ -2042,7 +2047,7 @@ if (lower === "heartbeat" || lower === "cofounder heartbeat") {
                 console.log("\nFULL RAW RESULTS");
                 console.log("-----------------");
                 console.log(result);
-                saveResearchEntry(query, result);
+                saveResearchEntry(query, result, researchProspect ? researchProspect.name : null);
             })
             .catch(error => {
                 console.log("\nRESEARCH ERROR");
@@ -3306,7 +3311,7 @@ if (input === "commercial brain" || input === "commercial") { commercialBrain.an
         const state = loadJson("cofounder-state.json", {});
     const research = Array.isArray(state.research) ? state.research : [];
     const prospectResearch = research.filter((entry) =>
-        true
+        entry.prospectName === prospect.name
     );
 
     console.log("\nEVIDENCE");
@@ -3456,7 +3461,7 @@ if (input === "commercial brain" || input === "commercial") { commercialBrain.an
         const state = loadJson("cofounder-state.json", {});
     const research = Array.isArray(state.research) ? state.research : [];
     const prospectResearch = research.filter((entry) =>
-        true
+        entry.prospectName === prospect.name
     );
 
     console.log("\nEVIDENCE");
