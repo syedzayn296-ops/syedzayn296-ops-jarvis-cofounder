@@ -4014,7 +4014,7 @@ function buildActionQueue() {
             actions.push({
                 priority: signal.priority,
                 type: "FOLLOW_UP",
-                action: "Review and work the open follow-up(s).",
+                action: `Review and work the open follow-up(s): ${(business.followUps || []).map(item => item.text).filter(Boolean).join("; ") || "Details not recorded."}`,
                 approvalRequired: true
             });
         }

@@ -513,3 +513,20 @@ test('prospect intelligence does not treat an unverified hypothesis as confirmed
   assert.doesNotMatch(result.stdout ?? '', /FACT:.*manual enquiry handling/i);
   assert.match(result.stdout ?? '', /External action: BLOCKED/);
 });
+
+test('action queue identifies the actual open follow-up', () => {
+  const business = prospectFixture();
+  business.followUps = [
+    {
+      text: 'Contact Guardsman Plumbers London',
+      status: 'OPEN',
+      createdAt: new Date().toISOString()
+    }
+  ];
+
+  const { result } = runIsolatedJarvis(business, 'actions\n');
+
+  assert.match(result.stdout ?? '', /Contact Guardsman Plumbers London/);
+  assert.match(result.stdout ?? '', /Zayn approval required/);
+  assert.match(result.stdout ?? '', /Nothing is executed automatically/);
+});
