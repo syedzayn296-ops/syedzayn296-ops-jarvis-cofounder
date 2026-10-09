@@ -91,7 +91,7 @@ test('JARVIS recommendation command responds', () => {
     'recommend\n'
   );
 
-  assert.equal(result.error?.code, 'ETIMEDOUT');
+  assert.equal(result.status, 0);
   assert.match(result.stdout ?? '', /JARVIS COFOUNDER RECOMMENDATION/);
 });
 
@@ -104,7 +104,7 @@ test('prospect recommendation refuses a final solution when discovery is incompl
     'prospect recommendation\n'
   );
 
-  assert.equal(result.error?.code, 'ETIMEDOUT');
+  assert.equal(result.status, 0);
   assert.match(result.stdout ?? '', /STATUS: POSSIBLE ZAYZANA FIT/);
   assert.match(result.stdout ?? '', /Do not select a final solution yet/);
   assert.match(result.stdout ?? '', /Complete discovery before proposing a specific Zayzana solution/);
@@ -122,7 +122,7 @@ test('prospect recommendation reaches review only when all core discovery is rec
     'prospect recommendation\n'
   );
 
-  assert.equal(result.error?.code, 'ETIMEDOUT');
+  assert.equal(result.status, 0);
   assert.match(result.stdout ?? '', /STATUS: READY FOR REVIEW/);
   assert.match(result.stdout ?? '', /Core discovery information has been recorded/);
   assert.match(result.stdout ?? '', /No proposal or external action should occur without Zayn's approval/);
@@ -136,7 +136,7 @@ test('prospect qualification records missing evidence instead of inventing it', 
     'prospect qualification\n'
   );
 
-  assert.equal(result.error?.code, 'ETIMEDOUT');
+  assert.equal(result.status, 0);
   assert.match(result.stdout ?? '', /QUALIFICATION: NEEDS MORE DISCOVERY/);
   assert.deepEqual(
     business.prospects[0].qualification.missing,
@@ -160,7 +160,7 @@ test('prospect qualification marks a prospect qualified only with all core evide
     'prospect qualification\n'
   );
 
-  assert.equal(result.error?.code, 'ETIMEDOUT');
+  assert.equal(result.status, 0);
   assert.match(result.stdout ?? '', /QUALIFICATION: QUALIFIED/);
   assert.deepEqual(business.prospects[0].qualification.missing, []);
   assert.equal(business.prospects[0].qualification.status, 'QUALIFIED');
@@ -180,7 +180,7 @@ test('cofounder challenge flags an open follow-up when qualification is incomple
     },
     'prospect qualification\nchallenge\n'
   );
-  assert.equal(result.error?.code, 'ETIMEDOUT');
+  assert.equal(result.status, 0);
   assert.match(result.stdout ?? '', /JARVIS COFOUNDER CHALLENGE/);
   assert.match(result.stdout ?? '', /The current follow-up may be premature because prospect qualification is incomplete/);
 });
@@ -191,7 +191,7 @@ test('cofounder blocks an unlinked approval when an active decision exists', () 
     'record decision complete qualification before contracting\napprove recommendation complete prospect qualification before contracting\n'
   );
 
-  assert.equal(result.error?.code, 'ETIMEDOUT');
+  assert.equal(result.status, 0);
   assert.match(result.stdout ?? '', /JARVIS APPROVAL BLOCKED/);
   assert.equal(state.approvals.length, 0);
 });
@@ -202,7 +202,7 @@ test('cofounder links an approval to the active decision it authorizes', () => {
     'record decision complete qualification before contracting\napprove recommendation complete prospect qualification before contracting for decision 1\n'
   );
 
-  assert.equal(result.error?.code, 'ETIMEDOUT');
+  assert.equal(result.status, 0);
   assert.match(result.stdout ?? '', /JARVIS RECOMMENDATION APPROVED/);
   assert.equal(state.approvals[0].decisionNumber, 1);
   assert.equal(state.approvals[0].decisionId, 'decision-1');
@@ -214,7 +214,7 @@ test('cofounder blocks execution when the linked decision has been closed', () =
     'record decision complete qualification before contracting\napprove recommendation complete prospect qualification before contracting for decision 1\nclose decision 1\nexecute approved 1\n'
   );
 
-  assert.equal(result.error?.code, 'ETIMEDOUT');
+  assert.equal(result.status, 0);
   assert.match(result.stdout ?? '', /Linked active approvals marked STALE/);
   assert.match(result.stdout ?? '', /JARVIS EXECUTION BLOCKED/);
   assert.equal(state.decisions[0].status, 'CLOSED');
@@ -228,7 +228,7 @@ test('cofounder approval records an active approval without executing it', () =>
     'approve recommendation complete prospect qualification before contracting\n'
   );
 
-  assert.equal(result.error?.code, 'ETIMEDOUT');
+  assert.equal(result.status, 0);
   assert.match(result.stdout ?? '', /JARVIS RECOMMENDATION APPROVED/);
   assert.equal(state.approvals.length, 1);
   assert.equal(state.approvals[0].status, 'ACTIVE');
@@ -242,7 +242,7 @@ test('cofounder execution gate executes only an active approval and records the 
     'approve recommendation complete prospect qualification before contracting\nexecute approved 1\n'
   );
 
-  assert.equal(result.error?.code, 'ETIMEDOUT');
+  assert.equal(result.status, 0);
   assert.match(result.stdout ?? '', /JARVIS EXECUTION RECORDED/);
   assert.equal(state.approvals[0].status, 'EXECUTED');
   assert.equal(state.executions.length, 1);
@@ -256,7 +256,7 @@ test('cofounder marks a new execution as pending verification', () => {
     'approve recommendation complete prospect qualification before contracting\nexecute approved 1\n'
   );
 
-  assert.equal(result.error?.code, 'ETIMEDOUT');
+  assert.equal(result.status, 0);
   assert.equal(state.executions.length, 1);
   assert.equal(state.executions[0].verificationStatus, 'PENDING');
   assert.equal(state.approvals[0].verificationStatus, 'PENDING');
@@ -267,7 +267,7 @@ test('cofounder verifies a completed execution', () => {
     'approve recommendation complete prospect qualification before contracting\nexecute approved 1\nverify execution 1 verified\nverify execution 1 verified\n'
   );
 
-  assert.equal(result.error?.code, 'ETIMEDOUT');
+  assert.equal(result.status, 0);
   assert.match(result.stdout, /COFOUNDER EXECUTION VERIFIED/);
   assert.match(result.stdout, /Verification: VERIFIED/);
   assert.match(result.stdout, /This execution is not pending verification/);
@@ -281,7 +281,7 @@ test('cofounder records a failed execution verification', () => {
     'approve recommendation complete prospect qualification before contracting\nexecute approved 1\nverify execution 1 failed\n'
   );
 
-  assert.equal(result.error?.code, 'ETIMEDOUT');
+  assert.equal(result.status, 0);
   assert.match(result.stdout, /Verification: FAILED/);
   assert.equal(state.executions.length, 1);
   assert.equal(state.executions[0].verificationStatus, 'FAILED');
@@ -293,7 +293,7 @@ test('cofounder records an unknown execution verification', () => {
     'approve recommendation complete prospect qualification before contracting\nexecute approved 1\nverify execution 1 unknown\n'
   );
 
-  assert.equal(result.error?.code, 'ETIMEDOUT');
+  assert.equal(result.status, 0);
   assert.match(result.stdout, /Verification: UNKNOWN/);
   assert.equal(state.executions.length, 1);
   assert.equal(state.executions[0].verificationStatus, 'UNKNOWN');
@@ -305,7 +305,7 @@ test('cofounder blocks execution when an approval has already been executed', ()
     'approve recommendation complete prospect qualification before contracting\nexecute approved 1\nexecute approved 1\n'
   );
 
-  assert.equal(result.error?.code, 'ETIMEDOUT');
+  assert.equal(result.status, 0);
   assert.match(result.stdout ?? '', /JARVIS EXECUTION RECORDED/);
   assert.match(result.stdout ?? '', /JARVIS EXECUTION BLOCKED/);
   assert.equal(state.approvals[0].status, 'EXECUTED');
@@ -341,7 +341,7 @@ test('cofounder lets newer qualification evidence supersede an older qualificati
     }
   );
 
-  assert.equal(result.error?.code, 'ETIMEDOUT');
+  assert.equal(result.status, 0);
   assert.match(result.stdout ?? '', /QUALIFICATION: QUALIFIED/);
   assert.match(result.stdout ?? '', /Focus first on: Send contract to prospect/);
   assert.doesNotMatch(result.stdout ?? '', /LEARNING SIGNAL: A past decision lesson indicates qualification should happen before contracting/);
@@ -353,7 +353,7 @@ test('cofounder blocks a lesson until the decision outcome is recorded', () => {
     'record decision complete qualification before contracting\ndecision lesson 1 qualify before contract\n'
   );
 
-  assert.equal(result.error?.code, 'ETIMEDOUT');
+  assert.equal(result.status, 0);
   assert.match(result.stdout ?? '', /JARVIS DECISION LESSON BLOCKED/);
   assert.equal(state.decisions.length, 1);
   assert.equal(state.decisions[0].lesson, undefined);
@@ -366,7 +366,7 @@ test('cofounder records an outcome before allowing the linked decision lesson', 
     'record decision complete qualification before contracting\ndecision outcome 1 Prospect confirmed the problem and agreed to provide missing evidence\ndecision lesson 1 Qualify before contract when discovery evidence is incomplete\n'
   );
 
-  assert.equal(result.error?.code, 'ETIMEDOUT');
+  assert.equal(result.status, 0);
   assert.match(result.stdout ?? '', /JARVIS DECISION OUTCOME RECORDED/);
   assert.match(result.stdout ?? '', /JARVIS DECISION LESSON RECORDED/);
   assert.equal(state.decisions[0].outcome, 'Prospect confirmed the problem and agreed to provide missing evidence');
@@ -407,7 +407,7 @@ test('cofounder carries a recorded lesson into a future recommendation', () => {
     'record decision complete qualification before contracting\ndecision outcome 1 Qualification gap confirmed\ndecision lesson 1 Qualify before contract when discovery evidence is incomplete\nrecommend\n'
   );
 
-  assert.equal(result.error?.code, 'ETIMEDOUT');
+  assert.equal(result.status, 0);
   assert.match(result.stdout ?? '', /JARVIS DECISION LESSON RECORDED/);
   assert.match(result.stdout ?? '', /Focus first on: complete prospect qualification before contracting/);
   assert.match(result.stdout ?? '', /LEARNING SIGNAL: A past decision lesson indicates qualification should happen before contracting/);
@@ -424,7 +424,7 @@ test('commercial assessment refuses to pursue when evidence is insufficient', ()
     'commercial assessment\n'
   );
 
-  assert.equal(result.error?.code, 'ETIMEDOUT');
+  assert.equal(result.status, 0);
   assert.match(result.stdout ?? '', /JUDGEMENT: NOT ENOUGH EVIDENCE/);
   assert.match(result.stdout ?? '', /EVIDENCE: INSUFFICIENT/);
   assert.match(result.stdout ?? '', /External action: BLOCKED/);
@@ -442,7 +442,7 @@ test('commercial assessment investigates when value is clear but money is unknow
     'commercial assessment\n'
   );
 
-  assert.equal(result.error?.code, 'ETIMEDOUT');
+  assert.equal(result.status, 0);
   assert.match(result.stdout ?? '', /JUDGEMENT: INVESTIGATE/);
   assert.match(result.stdout ?? '', /MONEY: UNKNOWN/);
   assert.match(result.stdout ?? '', /RETURN: UNKNOWN/);
@@ -464,7 +464,7 @@ test('commercial assessment can pursue when evidence and strategic fit are stron
     'commercial assessment\n'
   );
 
-  assert.equal(result.error?.code, 'ETIMEDOUT');
+  assert.equal(result.status, 0);
   assert.match(result.stdout ?? '', /JUDGEMENT: PURSUE/);
   assert.match(result.stdout ?? '', /STRATEGIC FIT:/);
   assert.match(result.stdout ?? '', /External action: BLOCKED/);
@@ -476,7 +476,7 @@ test('prospect intelligence rejects weak research as insufficient evidence', () 
     'prospect intelligence\n'
   );
 
-  assert.equal(result.error?.code, 'ETIMEDOUT');
+  assert.equal(result.status, 0);
   assert.match(result.stdout ?? '', /EVIDENCE: INSUFFICIENT/);
   assert.match(result.stdout ?? '', /JUDGEMENT: NOT ENOUGH EVIDENCE/);
   assert.match(result.stdout ?? '', /External action: BLOCKED/);
@@ -499,7 +499,7 @@ test('prospect intelligence distinguishes commercial signals from hypotheses', (
     }
   );
 
-  assert.equal(result.error?.code, 'ETIMEDOUT');
+  assert.equal(result.status, 0);
   assert.match(result.stdout ?? '', /COMMERCIAL SIGNALS:/);
   assert.match(result.stdout ?? '', /HYPOTHESES:/);
   assert.match(result.stdout ?? '', /UNKNOWN/);
@@ -524,7 +524,7 @@ test('prospect intelligence does not treat an unverified hypothesis as confirmed
     }
   );
 
-  assert.equal(result.error?.code, 'ETIMEDOUT');
+  assert.equal(result.status, 0);
   assert.match(result.stdout ?? '', /HYPOTHESES:/);
   assert.doesNotMatch(result.stdout ?? '', /FACT:.*losing leads/i);
   assert.doesNotMatch(result.stdout ?? '', /FACT:.*manual enquiry handling/i);
@@ -574,7 +574,7 @@ test('research command stores unassigned research without borrowing the first op
     { fakeResearch: true }
   );
 
-  assert.equal(result.error?.code, 'ETIMEDOUT');
+  assert.equal(result.status, 0);
   assert.match(result.stdout ?? '', /Prospect: Unassigned/);
   assert.equal(state.research.length, 1);
   assert.equal(state.research[0].prospectName, null);
@@ -591,7 +591,7 @@ test('research command associates evidence only with the explicitly named open p
     { fakeResearch: true }
   );
 
-  assert.equal(result.error?.code, 'ETIMEDOUT');
+  assert.equal(result.status, 0);
   assert.match(result.stdout ?? '', /Prospect: Test prospect/);
   assert.equal(state.research.length, 1);
   assert.equal(state.research[0].prospectName, 'Test prospect');
@@ -606,7 +606,7 @@ test('research refuses to run when an explicitly named prospect cannot be unique
     'research for Wrong prospect: find company website\n'
   );
 
-  assert.equal(result.error?.code, 'ETIMEDOUT');
+  assert.equal(result.status, 0);
   assert.match(result.stdout ?? '', /no single open prospect matched 'Wrong prospect'/);
   assert.equal(state.research, undefined);
 });
