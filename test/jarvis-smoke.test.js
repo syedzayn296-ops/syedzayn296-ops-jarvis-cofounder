@@ -528,6 +528,7 @@ test('action queue identifies the actual open follow-up', () => {
 
   assert.match(result.stdout ?? '', /Contact Guardsman Plumbers London/);
   assert.match(result.stdout ?? '', /Priority:.*100/);
+  assert.match(result.stdout ?? '', /Reason:.*open follow-up.*require attention/);
   assert.match(result.stdout ?? '', /Zayn approval required/);
   assert.match(result.stdout ?? '', /Nothing is executed automatically/);
 });

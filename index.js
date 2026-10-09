@@ -4013,6 +4013,7 @@ function buildActionQueue() {
         if (signal.type === "FOLLOW_UP") {
             actions.push({
                 priority: signal.priority,
+                reason: signal.message,
                 type: "FOLLOW_UP",
                 action: `Review and work the open follow-up(s): ${(business.followUps || []).map(item => item.text).filter(Boolean).join("; ") || "Details not recorded."}`,
                 approvalRequired: true
@@ -4022,6 +4023,7 @@ function buildActionQueue() {
         if (signal.type === "APPROVAL") {
             actions.push({
                 priority: signal.priority,
+                reason: signal.message,
                 type: "APPROVAL",
                 action: "Review the active approval(s) and confirm whether they are still valid.",
                 approvalRequired: true
@@ -4031,6 +4033,7 @@ function buildActionQueue() {
         if (signal.type === "COMMERCIAL") {
             actions.push({
                 priority: signal.priority,
+                reason: signal.message,
                 type: "COMMERCIAL",
                 action: "Review available research and identify one legitimate commercial opportunity.",
                 approvalRequired: true
@@ -4040,6 +4043,7 @@ function buildActionQueue() {
         if (signal.type === "RESEARCH") {
             actions.push({
                 priority: signal.priority,
+                reason: signal.message,
                 type: "RESEARCH",
                 action: "Review the unverified research and decide whether any finding should become a verified Zayzana fact.",
                 approvalRequired: true
@@ -4072,6 +4076,7 @@ function showActionQueue() {
         console.log(`\n${index + 1}. [${action.type}]`);
         console.log('Priority:', action.priority);
         console.log("Action:", action.action);
+        console.log('Reason:', action.reason || 'No reason recorded.');
         console.log("Approval:", action.approvalRequired ? "Zayn approval required" : "Not required");
     });
 
