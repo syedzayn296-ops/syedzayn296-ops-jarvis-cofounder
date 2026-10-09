@@ -2081,7 +2081,7 @@ if (lower === "heartbeat" || lower === "cofounder heartbeat") {
                 return;
             }
 
-            researchProspectName = matches[0].name;
+            researchProspectName = matches[0].name.trim();
         }
 
         if (!query) {
