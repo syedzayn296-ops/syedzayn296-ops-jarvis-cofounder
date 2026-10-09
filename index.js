@@ -28,23 +28,26 @@ function loadJson(file, fallback) {
 function saveJson(file, data) {
     fs.writeFileSync(file, JSON.stringify(data, null, 2));
 }
-function resolveActiveProspect(data) {
+function resolveActiveProspect(data, options = {}) {
     const prospects = Array.isArray(data?.prospects) ? data.prospects : [];
     const open = prospects.filter(item => item.status !== "CLOSED");
+    const announce = options.announce !== false;
     if (open.length === 0) return null;
     const selectedName = String(data.selectedProspectName || "").trim();
     if (selectedName) {
         const matches = open.filter(item => String(item.name || "").trim().toLowerCase() === selectedName.toLowerCase());
         if (matches.length === 1) return matches[0];
         if (matches.length > 1) {
-            console.log("Multiple open prospects share that name. Select a unique name.");
+            if (announce) console.log("Multiple open prospects share that name. Select a unique name.");
             return null;
         }
     }
     if (open.length === 1) return open[0];
-    console.log("Multiple open prospects found. Select one first:");
-    open.forEach(item => console.log("- " + item.name));
-    console.log("Command: select prospect <exact name>");
+    if (announce) {
+        console.log("Multiple open prospects found. Select one first:");
+        open.forEach(item => console.log("- " + item.name));
+        console.log("Command: select prospect <exact name>");
+    }
     return null;
 }
 
@@ -650,6 +653,8 @@ function showActionBrain() {
         (item) => item.status !== "CLOSED"
     );
 
+    const activeProspect = resolveActiveProspect(business, { announce: false });
+
     const openOpportunities = business.opportunities.filter(
         (item) => item.status === "OPEN"
     );
@@ -682,10 +687,14 @@ function showActionBrain() {
         return;
     }
 
-    if (openProspects.length > 0) {
-        console.log(
-            `Work the next prospect: ${openProspects[0].name}`
-        );
+    if (activeProspect) {
+        console.log(`Work the selected prospect: ${activeProspect.name}`);
+        return;
+    }
+
+    if (openProspects.length > 1) {
+        console.log("Select a prospect before choosing the next prospect-specific action.");
+        console.log("Command: select prospect <exact name>");
         return;
     }
 
@@ -720,6 +729,8 @@ function showBusinessPriorities() {
         (item) => item.status !== "CLOSED"
     );
 
+    const activeProspect = resolveActiveProspect(business, { announce: false });
+
     const openOpportunities = business.opportunities.filter(
         (item) => item.status === "OPEN"
     );
@@ -732,10 +743,10 @@ function showBusinessPriorities() {
         console.log("1. No open follow-up.");
     }
 
-    if (openProspects.length > 0) {
-        console.log(
-            `2. Prospect: ${openProspects[0].name}`
-        );
+    if (activeProspect) {
+        console.log(`2. Selected prospect: ${activeProspect.name}`);
+    } else if (openProspects.length > 0) {
+        console.log("2. Selection required: use select prospect <exact name>.");
     } else {
         console.log("2. No active prospects.");
     }
@@ -764,6 +775,8 @@ function showOperatingBrain() {
     const openProspects = business.prospects.filter(
         (item) => item.status !== "CLOSED"
     );
+
+    const activeProspect = resolveActiveProspect(business, { announce: false });
 
     const openOpportunities = business.opportunities.filter(
         (item) => item.status === "OPEN"
@@ -840,19 +853,17 @@ function showOperatingBrain() {
         return;
     }
 
-    if (openProspects.length > 0) {
-        console.log(
-            `1. Work the next prospect: ${openProspects[0].name}`
-        );
-        console.log(
-            "2. Identify the business problem."
-        );
-        console.log(
-            "3. Match it to a Zayzana offer."
-        );
-        console.log(
-            "4. Capture reusable components from the solution."
-        );
+    if (activeProspect) {
+        console.log(`1. Work the selected prospect: ${activeProspect.name}`);
+        console.log("2. Identify the business problem.");
+        console.log("3. Match it to a Zayzana offer.");
+        console.log("4. Capture reusable components from the solution.");
+        return;
+    }
+
+    if (openProspects.length > 1) {
+        console.log("Select a prospect before choosing the next prospect-specific action.");
+        console.log("Command: select prospect <exact name>");
         return;
     }
 
@@ -906,6 +917,8 @@ function showOpportunityAction() {
         (item) => item.status !== "CLOSED"
     );
 
+    const activeProspect = resolveActiveProspect(business, { announce: false });
+
     const openOpportunities = business.opportunities.filter(
         (item) => item.status === "OPEN"
     );
@@ -944,19 +957,17 @@ function showOpportunityAction() {
         return;
     }
 
-    if (openProspects.length > 0) {
-        console.log(
-            `1. Contact the prospect: ${openProspects[0].name}`
-        );
-        console.log(
-            "2. Discover the business problem."
-        );
-        console.log(
-            "3. Match the problem to a Zayzana offer."
-        );
-        console.log(
-            "4. Record the opportunity."
-        );
+    if (activeProspect) {
+        console.log(`1. Contact the selected prospect: ${activeProspect.name}`);
+        console.log("2. Discover the business problem.");
+        console.log("3. Match the problem to a Zayzana offer.");
+        console.log("4. Record the opportunity.");
+        return;
+    }
+
+    if (openProspects.length > 1) {
+        console.log("Select a prospect before choosing the next prospect-specific action.");
+        console.log("Command: select prospect <exact name>");
         return;
     }
 
@@ -1016,6 +1027,8 @@ function showZayzanaFocus() {
         (item) => item.status !== "CLOSED"
     );
 
+    const activeProspect = resolveActiveProspect(business, { announce: false });
+
     const openOpportunities = business.opportunities.filter(
         (item) => item.status === "OPEN"
     );
@@ -1027,10 +1040,14 @@ function showZayzanaFocus() {
         return;
     }
 
-    if (openProspects.length > 0) {
-        console.log(
-            `CURRENT FOCUS: Prospect | ${openProspects[0].name}`
-        );
+    if (activeProspect) {
+        console.log(`CURRENT FOCUS: Selected prospect | ${activeProspect.name}`);
+        return;
+    }
+
+    if (openProspects.length > 1) {
+        console.log("CURRENT FOCUS: Select a prospect before choosing prospect-specific work.");
+        console.log("Command: select prospect <exact name>");
         return;
     }
 
