@@ -696,3 +696,49 @@ test('commercial brain respects the explicitly selected prospect', () => {
   assert.match(result.stdout ?? '', /Second prospect problem/);
   assert.doesNotMatch(result.stdout ?? '', /Name: Test prospect/);
 });
+
+test('dashboard views respect the selected prospect instead of showing the first open prospect', () => {
+  const business = prospectFixture();
+  business.prospects.push({
+    name: 'Second prospect',
+    details: 'Another test business',
+    status: 'NEW',
+    discovery: { problem: 'Second prospect problem' }
+  });
+  business.selectedProspectName = 'Second prospect';
+
+  for (const command of [
+    'action brain',
+    'business priorities',
+    'operating brain',
+    'opportunity action',
+    'zayzana focus'
+  ]) {
+    const { result } = runIsolatedJarvis(business, command + '\n');
+    assert.equal(result.status, 0, command);
+    assert.match(result.stdout ?? '', /Second prospect/, command);
+    assert.doesNotMatch(result.stdout ?? '', /Test prospect/, command);
+  }
+});
+
+test('dashboard views require selection when multiple prospects are open and none is selected', () => {
+  const business = prospectFixture();
+  business.prospects.push({
+    name: 'Second prospect',
+    details: 'Another test business',
+    status: 'NEW'
+  });
+
+  for (const command of [
+    'action brain',
+    'business priorities',
+    'operating brain',
+    'opportunity action',
+    'zayzana focus'
+  ]) {
+    const { result } = runIsolatedJarvis(business, command + '\n');
+    assert.equal(result.status, 0, command);
+    assert.match(result.stdout ?? '', /select prospect <exact name>/i, command);
+    assert.doesNotMatch(result.stdout ?? '', /Work the next prospect: Test prospect|Contact the prospect: Test prospect|CURRENT FOCUS: Prospect \| Test prospect/, command);
+  }
+});
