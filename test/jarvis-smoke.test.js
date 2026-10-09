@@ -80,11 +80,16 @@ function prospectFixture(discovery = {}) {
 }
 
 test('JARVIS recommendation command responds', () => {
-  const result = spawnSync(process.execPath, ['index.js'], {
-    input: 'recommend\n',
-    encoding: 'utf8',
-    timeout: 3000
-  });
+  const { result } = runIsolatedJarvis(
+    {
+      prospects: [],
+      opportunities: [],
+      offers: [],
+      followUps: [],
+      revenue: []
+    },
+    'recommend\n'
+  );
 
   assert.equal(result.error?.code, 'ETIMEDOUT');
   assert.match(result.stdout ?? '', /JARVIS COFOUNDER RECOMMENDATION/);
