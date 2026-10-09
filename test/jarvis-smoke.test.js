@@ -667,4 +667,32 @@ test('explicit prospect selection directs recommendation to the chosen prospect'
   assert.match(result.stdout ?? '', /Prospect: Second prospect/);
   assert.equal(savedBusiness.selectedProspectName, 'Second prospect');
 });
+test('commercial brain respects the explicitly selected prospect', () => {
+  const business = prospectFixture({
+    problem: 'First prospect problem',
+    impact: 'First prospect impact',
+    currentSolution: 'First current solution',
+    desiredOutcome: 'First desired outcome',
+    decisionMaker: 'First decision maker'
+  });
+  business.prospects.push({
+    name: 'Second prospect',
+    details: 'Another test business',
+    status: 'NEW',
+    discovery: {
+      problem: 'Second prospect problem',
+      impact: 'Second prospect impact',
+      currentSolution: 'Second current solution',
+      desiredOutcome: 'Second desired outcome',
+      decisionMaker: 'Second decision maker'
+    }
+  });
+  business.selectedProspectName = 'Second prospect';
 
+  const { result } = runIsolatedJarvis(business, 'commercial brain\\n');
+
+  assert.equal(result.status, 0);
+  assert.match(result.stdout ?? '', /ACTIVE PROSPECT[\\s\\S]*Name: Second prospect/);
+  assert.match(result.stdout ?? '', /Second prospect problem/);
+  assert.doesNotMatch(result.stdout ?? '', /Name: Test prospect/);
+});
