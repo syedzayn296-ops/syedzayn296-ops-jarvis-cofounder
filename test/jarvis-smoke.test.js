@@ -559,7 +559,7 @@ test('research remains unassigned by default and only links to an explicitly nam
   const handler = source.slice(start, end);
   assert.doesNotMatch(handler, /activeResearchProspects|activeResearchProspects\[0\]/);
   assert.match(handler, /researchProspectName \|\| "Unassigned"/);
-  assert.match(handler, /prospect\.name\.toLowerCase\(\) === requestedProspectName\.toLowerCase\(\)/);
+  assert.match(handler, /prospect\.name\.trim\(\)\.toLowerCase\(\) === requestedProspectName\.trim\(\)\.toLowerCase\(\)/);
   assert.match(handler, /saveResearchEntry\(query, result, researchProspectName\)/);
   assert.match(handler, /matches\.length !== 1/);
 });
@@ -596,6 +596,25 @@ test('research command associates evidence only with the explicitly named open p
   assert.equal(state.research.length, 1);
   assert.equal(state.research[0].prospectName, 'Test prospect');
   assert.equal(state.research[0].query, 'find company website');
+});
+
+test('research association trims accidental whitespace from prospect names', {
+  skip: process.platform !== 'win32'
+}, () => {
+  const business = prospectFixture();
+  business.prospects[0].name = '  Test prospect  ';
+
+  const { result, state } = runIsolatedJarvis(
+    business,
+    'research for Test prospect: find company website\n',
+    {},
+    { fakeResearch: true }
+  );
+
+  assert.equal(result.status, 0);
+  assert.match(result.stdout ?? '', /Prospect: Test prospect/);
+  assert.equal(state.research.length, 1);
+  assert.equal(state.research[0].prospectName, 'Test prospect');
 });
 
 test('research refuses to run when an explicitly named prospect cannot be uniquely matched', {
