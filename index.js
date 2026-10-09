@@ -318,7 +318,9 @@ function checkReminders() {
     });
 }
 
-setInterval(checkReminders, 1000);
+// Reminder checks should not keep an otherwise-idle CLI or test process alive.
+const reminderInterval = setInterval(checkReminders, 1000);
+reminderInterval.unref();
 
 // --------------------------------------------------
 // PROJECT BRAIN
