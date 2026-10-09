@@ -689,10 +689,10 @@ test('commercial brain respects the explicitly selected prospect', () => {
   });
   business.selectedProspectName = 'Second prospect';
 
-  const { result } = runIsolatedJarvis(business, 'commercial brain\\n');
+  const { result } = runIsolatedJarvis(business, 'commercial brain\n');
 
   assert.equal(result.status, 0);
-  assert.match(result.stdout ?? '', /ACTIVE PROSPECT[\\s\\S]*Name: Second prospect/);
+  assert.match(result.stdout ?? '', /ACTIVE PROSPECT[\s\S]*Name: Second prospect/);
   assert.match(result.stdout ?? '', /Second prospect problem/);
   assert.doesNotMatch(result.stdout ?? '', /Name: Test prospect/);
 });
