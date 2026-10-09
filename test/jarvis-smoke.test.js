@@ -610,3 +610,61 @@ test('research refuses to run when an explicitly named prospect cannot be unique
   assert.match(result.stdout ?? '', /no single open prospect matched 'Wrong prospect'/);
   assert.equal(state.research, undefined);
 });
+
+test('multiple open prospects require an explicit selection before recommendation', () => {
+  const business = prospectFixture();
+  business.prospects.push({
+    name: 'Second prospect',
+    details: 'Another test business',
+    status: 'NEW',
+    discovery: {
+      problem: 'Confirmed problem',
+      impact: 'Confirmed impact',
+      currentSolution: 'Current workaround',
+      desiredOutcome: 'Desired outcome',
+      decisionMaker: 'Owner'
+    }
+  });
+
+  const { result } = runIsolatedJarvis(business, 'prospect recommendation\\n');
+
+  assert.equal(result.status, 0);
+  assert.match(result.stdout ?? '', /Multiple open prospects found/);
+  assert.match(result.stdout ?? '', /select prospect <exact name>/);
+  assert.match(result.stdout ?? '', /Test prospect/);
+  assert.match(result.stdout ?? '', /Second prospect/);
+  assert.doesNotMatch(result.stdout ?? '', /JARVIS PROSPECT RECOMMENDATION/);
+});
+
+test('explicit prospect selection directs recommendation to the chosen prospect', () => {
+  const business = prospectFixture({
+    problem: 'First prospect problem',
+    impact: 'First prospect impact',
+    currentSolution: 'First current solution',
+    desiredOutcome: 'First desired outcome',
+    decisionMaker: 'First decision maker'
+  });
+  business.prospects.push({
+    name: 'Second prospect',
+    details: 'Another test business',
+    status: 'NEW',
+    discovery: {
+      problem: 'Second prospect problem',
+      impact: 'Second prospect impact',
+      currentSolution: 'Second current solution',
+      desiredOutcome: 'Second desired outcome',
+      decisionMaker: 'Second decision maker'
+    }
+  });
+
+  const { result, business: savedBusiness } = runIsolatedJarvis(
+    business,
+    'select prospect Second prospect\\nprospect recommendation\\n'
+  );
+
+  assert.equal(result.status, 0);
+  assert.match(result.stdout ?? '', /Selected prospect: Second prospect/);
+  assert.match(result.stdout ?? '', /Prospect: Second prospect/);
+  assert.equal(savedBusiness.selectedProspectName, 'Second prospect');
+});
+
