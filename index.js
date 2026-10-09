@@ -3174,19 +3174,6 @@ if (input === "commercial brain" || input === "commercial") { commercialBrain.an
         const field = parts[1];
         const value = parts.slice(2).join(" ").trim();
 
-        const validFields = [
-            "problem",
-            "impact",
-            "current",
-            "solution",
-            "outcome",
-            "decision",
-            "maker",
-            "budget",
-            "timeline",
-            "notes"
-        ];
-
         if (!value) {
             console.log("JARVIS > Please provide the discovery answer.");
             return true;
