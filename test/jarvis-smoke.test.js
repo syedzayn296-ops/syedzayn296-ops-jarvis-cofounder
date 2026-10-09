@@ -742,3 +742,50 @@ test('dashboard views require selection when multiple prospects are open and non
     assert.doesNotMatch(result.stdout ?? '', /Work the next prospect: Test prospect|Contact the prospect: Test prospect|CURRENT FOCUS: Prospect \| Test prospect/, command);
   }
 });
+
+test('dashboard views require reselection when the saved prospect is no longer open and multiple prospects remain', () => {
+  const business = prospectFixture();
+  business.prospects[0].status = 'CLOSED';
+  business.prospects.push(
+    { name: 'Second prospect', status: 'NEW' },
+    { name: 'Third prospect', status: 'NEW' }
+  );
+  business.selectedProspectName = 'Test prospect';
+
+  for (const command of [
+    'action brain',
+    'business priorities',
+    'operating brain',
+    'opportunity action',
+    'zayzana focus'
+  ]) {
+    const { result } = runIsolatedJarvis(business, command + '\\n');
+    assert.equal(result.status, 0, command);
+    assert.match(result.stdout ?? '', /select prospect <exact name>/i, command);
+    assert.doesNotMatch(result.stdout ?? '', /CURRENT FOCUS: Selected prospect \\| Test prospect|Work the selected prospect: Test prospect/, command);
+  }
+});
+
+test('dashboard views do not choose between duplicate open prospect names', () => {
+  const business = prospectFixture();
+  business.prospects.push({
+    name: 'Test prospect',
+    details: 'A different record with the same name',
+    status: 'NEW'
+  });
+  business.prospects.push({ name: 'Third prospect', status: 'NEW' });
+  business.selectedProspectName = 'Test prospect';
+
+  for (const command of [
+    'action brain',
+    'business priorities',
+    'operating brain',
+    'opportunity action',
+    'zayzana focus'
+  ]) {
+    const { result } = runIsolatedJarvis(business, command + '\\n');
+    assert.equal(result.status, 0, command);
+    assert.match(result.stdout ?? '', /select prospect <exact name>/i, command);
+    assert.doesNotMatch(result.stdout ?? '', /Work the selected prospect: Test prospect|CURRENT FOCUS: Selected prospect \\| Test prospect/, command);
+  }
+});
