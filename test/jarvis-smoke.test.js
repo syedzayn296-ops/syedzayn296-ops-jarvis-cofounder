@@ -626,7 +626,7 @@ test('multiple open prospects require an explicit selection before recommendatio
     }
   });
 
-  const { result } = runIsolatedJarvis(business, 'prospect recommendation\\n');
+  const { result } = runIsolatedJarvis(business, 'prospect recommendation\n');
 
   assert.equal(result.status, 0);
   assert.match(result.stdout ?? '', /Multiple open prospects found/);
@@ -659,7 +659,7 @@ test('explicit prospect selection directs recommendation to the chosen prospect'
 
   const { result, business: savedBusiness } = runIsolatedJarvis(
     business,
-    'select prospect Second prospect\\nprospect recommendation\\n'
+    'select prospect Second prospect\nprospect recommendation\n'
   );
 
   assert.equal(result.status, 0);
