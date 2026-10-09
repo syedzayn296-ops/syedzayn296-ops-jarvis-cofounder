@@ -532,3 +532,17 @@ test('action queue identifies the actual open follow-up', () => {
   assert.match(result.stdout ?? '', /Zayn approval required/);
   assert.match(result.stdout ?? '', /Nothing is executed automatically/);
 });
+
+test('research remains unassigned by default and only links to an explicitly named open prospect', () => {
+  const source = fs.readFileSync(indexFile, 'utf8');
+  const start = source.indexOf('if (lower.startsWith("research "))');
+  const end = source.indexOf('if (lower.startsWith("record decision "))', start);
+
+  assert.ok(start >= 0 && end > start, 'research handler should be present');
+  const handler = source.slice(start, end);
+  assert.doesNotMatch(handler, /activeResearchProspects|activeResearchProspects\[0\]/);
+  assert.match(handler, /researchProspectName \|\| "Unassigned"/);
+  assert.match(handler, /prospect\.name\.toLowerCase\(\) === requestedProspectName\.toLowerCase\(\)/);
+  assert.match(handler, /saveResearchEntry\(query, result, researchProspectName\)/);
+  assert.match(handler, /matches\.length !== 1/);
+});
