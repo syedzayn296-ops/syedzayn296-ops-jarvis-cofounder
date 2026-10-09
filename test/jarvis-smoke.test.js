@@ -527,6 +527,7 @@ test('action queue identifies the actual open follow-up', () => {
   const { result } = runIsolatedJarvis(business, 'actions\n');
 
   assert.match(result.stdout ?? '', /Contact Guardsman Plumbers London/);
+  assert.match(result.stdout ?? '', /Priority:.*100/);
   assert.match(result.stdout ?? '', /Zayn approval required/);
   assert.match(result.stdout ?? '', /Nothing is executed automatically/);
 });

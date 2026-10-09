@@ -4070,6 +4070,7 @@ function showActionQueue() {
 
     queue.actions.forEach((action, index) => {
         console.log(`\n${index + 1}. [${action.type}]`);
+        console.log('Priority:', action.priority);
         console.log("Action:", action.action);
         console.log("Approval:", action.approvalRequired ? "Zayn approval required" : "Not required");
     });
