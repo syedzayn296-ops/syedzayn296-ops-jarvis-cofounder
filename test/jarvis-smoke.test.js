@@ -8,7 +8,7 @@ const path = require('node:path');
 const repoRoot = path.join(__dirname, '..');
 const indexFile = path.join(repoRoot, 'index.js');
 
-function runIsolatedJarvis(business, input, state = {}) {
+function runIsolatedJarvis(business, input, state = {}, options = {}) {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'jarvis-test-'));
 
   try {
@@ -29,10 +29,22 @@ function runIsolatedJarvis(business, input, state = {}) {
       }, null, 2)
     );
 
+    if (options.fakeResearch) {
+      fs.writeFileSync(
+        path.join(tempDir, 'mcporter.cmd'),
+        '@echo off\r\necho Title: Example Result\r\necho URL: https://example.com/test\r\n'
+      );
+    }
+
+    const env = options.fakeResearch
+      ? { ...process.env, PATH: `${tempDir};${process.env.PATH || ''}` }
+      : process.env;
+
     const result = spawnSync(process.execPath, ['index.js'], {
       cwd: tempDir,
       input,
       encoding: 'utf8',
+      env,
       timeout: 3000
     });
 
@@ -545,4 +557,53 @@ test('research remains unassigned by default and only links to an explicitly nam
   assert.match(handler, /prospect\.name\.toLowerCase\(\) === requestedProspectName\.toLowerCase\(\)/);
   assert.match(handler, /saveResearchEntry\(query, result, researchProspectName\)/);
   assert.match(handler, /matches\.length !== 1/);
+});
+
+
+
+test('research command stores unassigned research without borrowing the first open prospect', {
+  skip: process.platform !== 'win32'
+}, () => {
+  const { result, state } = runIsolatedJarvis(
+    prospectFixture(),
+    'research find company website\n',
+    {},
+    { fakeResearch: true }
+  );
+
+  assert.equal(result.error?.code, 'ETIMEDOUT');
+  assert.match(result.stdout ?? '', /Prospect: Unassigned/);
+  assert.equal(state.research.length, 1);
+  assert.equal(state.research[0].prospectName, null);
+  assert.equal(state.research[0].query, 'find company website');
+});
+
+test('research command associates evidence only with the explicitly named open prospect', {
+  skip: process.platform !== 'win32'
+}, () => {
+  const { result, state } = runIsolatedJarvis(
+    prospectFixture(),
+    'research for Test prospect: find company website\n',
+    {},
+    { fakeResearch: true }
+  );
+
+  assert.equal(result.error?.code, 'ETIMEDOUT');
+  assert.match(result.stdout ?? '', /Prospect: Test prospect/);
+  assert.equal(state.research.length, 1);
+  assert.equal(state.research[0].prospectName, 'Test prospect');
+  assert.equal(state.research[0].query, 'find company website');
+});
+
+test('research refuses to run when an explicitly named prospect cannot be uniquely matched', {
+  skip: process.platform !== 'win32'
+}, () => {
+  const { result, state } = runIsolatedJarvis(
+    prospectFixture(),
+    'research for Wrong prospect: find company website\n'
+  );
+
+  assert.equal(result.error?.code, 'ETIMEDOUT');
+  assert.match(result.stdout ?? '', /no single open prospect matched 'Wrong prospect'/);
+  assert.equal(state.research, undefined);
 });
