@@ -21,7 +21,7 @@ Observe → Assess → Challenge → Recommend → Decide → Approve → Execut
 
 ## Development status
 
-The current build is a local Node.js prototype developed on the Acer development machine.
+The current build is a local Node.js prototype being prepared and tested on the Dell development machine.
 
 Live OpenAI API work is intentionally parked until billing/credits are available.
 
