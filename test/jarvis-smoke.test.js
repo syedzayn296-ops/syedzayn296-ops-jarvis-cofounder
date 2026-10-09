@@ -559,8 +559,6 @@ test('research remains unassigned by default and only links to an explicitly nam
   assert.match(handler, /matches\.length !== 1/);
 });
 
-
-
 test('research command stores unassigned research without borrowing the first open prospect', {
   skip: process.platform !== 'win32'
 }, () => {
