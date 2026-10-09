@@ -2072,7 +2072,7 @@ if (lower === "heartbeat" || lower === "cofounder heartbeat") {
             const matches = (researchBusiness.prospects || []).filter(prospect =>
                 prospect.status !== "CLOSED" &&
                 typeof prospect.name === "string" &&
-                prospect.name.toLowerCase() === requestedProspectName.toLowerCase()
+                prospect.name.trim().toLowerCase() === requestedProspectName.trim().toLowerCase()
             );
 
             if (matches.length !== 1) {
