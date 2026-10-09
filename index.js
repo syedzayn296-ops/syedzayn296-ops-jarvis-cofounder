@@ -28,6 +28,26 @@ function loadJson(file, fallback) {
 function saveJson(file, data) {
     fs.writeFileSync(file, JSON.stringify(data, null, 2));
 }
+function resolveActiveProspect(data) {
+    const prospects = Array.isArray(data?.prospects) ? data.prospects : [];
+    const open = prospects.filter(item => item.status !== "CLOSED");
+    if (open.length === 0) return null;
+    const selectedName = String(data.selectedProspectName || "").trim();
+    if (selectedName) {
+        const matches = open.filter(item => String(item.name || "").trim().toLowerCase() === selectedName.toLowerCase());
+        if (matches.length === 1) return matches[0];
+        if (matches.length > 1) {
+            console.log("Multiple open prospects share that name. Select a unique name.");
+            return null;
+        }
+    }
+    if (open.length === 1) return open[0];
+    console.log("Multiple open prospects found. Select one first:");
+    open.forEach(item => console.log("- " + item.name));
+    console.log("Command: select prospect <exact name>");
+    return null;
+}
+
 
 function classifyResearchResult(query, title, url) {
     const q = query.toLowerCase();
@@ -1046,7 +1066,8 @@ function showProspectIntelligence() {
         return;
     }
 
-    const prospect = activeProspects[0];
+    const prospect = resolveActiveProspect(business);
+    if (!prospect) return;
 
     console.log("\nCURRENT PROSPECT");
     console.log("----------------");
@@ -1425,7 +1446,8 @@ function showProspectDiscovery() {
          return;
      }
 
-     const prospect = activeProspects[0];
+     const prospect = resolveActiveProspect(business);
+    if (!prospect) return;
 
      if (!prospect.discovery) {
          prospect.discovery = {
@@ -1864,6 +1886,22 @@ function showHeartbeat() {
 function handleCommand(input) {
     const trimmed = input.trim();
     const lower = trimmed.toLowerCase();
+    if (lower.startsWith("select prospect ")) {
+        const requestedName = trimmed.slice("select prospect ".length).trim();
+        const open = (business.prospects || []).filter(item => item.status !== "CLOSED");
+        const matches = open.filter(item => String(item.name || "").trim().toLowerCase() === requestedName.toLowerCase());
+        if (!requestedName || matches.length !== 1) {
+            console.log(matches.length > 1 ? "More than one open prospect has that name; use a unique name." : "No unique open prospect matched that name.");
+            console.log("Open prospects:");
+            open.forEach(item => console.log("- " + item.name));
+            return true;
+        }
+        business.selectedProspectName = matches[0].name;
+        saveJson(businessFile, business);
+        console.log("Selected prospect: " + matches[0].name);
+        return true;
+    }
+
 
     if (lower === "status" || lower === "founder status" || lower === "cofounder status") {
     const dashboard = founderDashboard();
@@ -2741,7 +2779,7 @@ if (lower === "heartbeat" || lower === "cofounder heartbeat") {
 
     const business = JSON.parse(fs.readFileSync("business.json", "utf8"));
     const prospects = business.prospects || [];
-    const active = prospects.find(p => p.status !== "CLOSED");
+    const active = resolveActiveProspect(business);
 
     console.log("");
 
@@ -2819,7 +2857,7 @@ if (input.startsWith("discovery impact ")) {
 
     const business = JSON.parse(fs.readFileSync("business.json", "utf8"));
     const prospects = business.prospects || [];
-    const active = prospects.find(p => p.status !== "CLOSED");
+    const active = resolveActiveProspect(business);
 
     if (!active) {
         console.log("No active prospect is currently recorded.");
@@ -2843,7 +2881,7 @@ if (input.startsWith("discovery impact ")) {
 if (input === "next discovery" || input === "discovery question") {
     const business = JSON.parse(fs.readFileSync("business.json", "utf8"));
     const prospects = business.prospects || [];
-    const active = prospects.find(p => p.status !== "CLOSED");
+    const active = resolveActiveProspect(business);
 
     console.log("");
     console.log("NEXT DISCOVERY QUESTION");
@@ -2899,7 +2937,8 @@ if (input === "run cycle" || input === "cycle") {
         return;
     }
 
-    const prospect = activeProspects[0];
+    const prospect = resolveActiveProspect(businessState);
+    if (!prospect) return;
     const d = prospect.discovery || {};
     const required = [
         ["problem", d.problem],
@@ -3190,7 +3229,8 @@ if (input === "commercial brain" || input === "commercial") { commercialBrain.an
             return true;
         }
 
-        const prospect = activeProspects[0];
+        const prospect = resolveActiveProspect(business);
+        if (!prospect) return true;
 
         if (!prospect.discovery) {
             prospect.discovery = {
@@ -3246,7 +3286,8 @@ if (input === "commercial brain" || input === "commercial") { commercialBrain.an
             return true;
         }
 
-        const prospect = activeProspects[0];
+        const prospect = resolveActiveProspect(business);
+        if (!prospect) return true;
 
         if (!prospect.discovery) {
             console.log("\nJARVIS > Discovery has not been started for this prospect.");
@@ -3375,7 +3416,8 @@ if (input === "commercial brain" || input === "commercial") { commercialBrain.an
             return true;
         }
 
-        const prospect = activeProspects[0];
+        const prospect = resolveActiveProspect(business);
+        if (!prospect) return true;
         const d = prospect.discovery || {};
 
         console.log("\nJARVIS PROSPECT RECOMMENDATION");
@@ -4086,7 +4128,7 @@ function showActionQueue() {
 function commercialAssessment() {
     const business = JSON.parse(fs.readFileSync("business.json", "utf8"));
     const prospects = Array.isArray(business.prospects) ? business.prospects : [];
-    const prospect = prospects.find(p => p.status !== "CLOSED") || null;
+    const prospect = resolveActiveProspect(business);
 
     console.log("");
     console.log("JARVIS COMMERCIAL ASSESSMENT");
