@@ -1196,7 +1196,7 @@ function showProspectIntelligence() {
         revenue: []
     });
 
-    const prospect = businessData.prospects.find(item => item.status !== "CLOSED");
+    const prospect = resolveActiveProspect(businessData);
 
     console.log("\nJARVIS PROSPECT WORKSPACE");
     console.log("-------------------------");
@@ -3772,6 +3772,7 @@ const commercialBrain = {
         const openProspects = prospects.filter(p => p.status !== "CLOSED");
         const openOpportunities = opportunities.filter(o => o.status === "OPEN");
         const openFollowUps = followUps.filter(f => f.status === "OPEN");
+        const activeProspect = resolveActiveProspect(business);
 
         console.log("");
         console.log("JARVIS COMMERCIAL BRAIN");
@@ -3793,8 +3794,8 @@ const commercialBrain = {
             return;
         }
 
-        if (openProspects.length > 0) {
-            const prospect = openProspects[0];
+        if (activeProspect) {
+            const prospect = activeProspect;
             const discovery = prospect.discovery || {};
             const qualification = prospect.qualification || {};
 
@@ -3891,8 +3892,8 @@ console.log("----------------------");
 
 let commercialNextAction = "";
 
-if (openProspects.length > 0) {
-    const active = openProspects[0];
+if (activeProspect) {
+    const active = activeProspect;
     const d = active.discovery || {};
     const q = active.qualification || {};
 
@@ -3932,8 +3933,8 @@ console.log("------------------");
 
 let discoveryQuestion = "";
 
-if (openProspects.length > 0) {
-    const active = openProspects[0];
+if (activeProspect) {
+    const active = activeProspect;
     const d = active.discovery || {};
 
     if (!d.problem) {
