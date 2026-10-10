@@ -95,6 +95,17 @@ test('JARVIS recommendation command responds', () => {
   assert.match(result.stdout ?? '', /JARVIS COFOUNDER RECOMMENDATION/);
 });
 
+test('general recommendation flags a prospect with no discovery or qualification record', () => {
+  const { result } = runIsolatedJarvis(
+    prospectFixture(),
+    'recommend\n'
+  );
+
+  assert.equal(result.status, 0);
+  assert.match(result.stdout ?? '', /Prospect discovery is incomplete/);
+  assert.match(result.stdout ?? '', /Test prospect/);
+  assert.doesNotMatch(result.stdout ?? '', /No major prospect qualification gap is recorded/);
+});
 test('prospect recommendation refuses a final solution when discovery is incomplete', () => {
   const { result } = runIsolatedJarvis(
     prospectFixture({

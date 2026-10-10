@@ -2660,7 +2660,7 @@ if (lower === "heartbeat" || lower === "cofounder heartbeat") {
         console.log("RECOMMENDATION");
 
         const recommendationLessons = Array.isArray(state.lessons) ? state.lessons : [];
-        const incompleteProspects = prospects.filter(p => p.qualification && p.qualification.status !== "QUALIFIED");
+        const incompleteProspects = prospects.filter(p => p.status !== "CLOSED" && (!p.qualification || p.qualification.status !== "QUALIFIED"));
         const hasQualificationLesson = recommendationLessons.some(lesson => {
             const text = (lesson.text || "").toLowerCase();
             return text.includes("qualify") && text.includes("contract");
@@ -2677,6 +2677,8 @@ if (lower === "heartbeat" || lower === "cofounder heartbeat") {
             const followUp = openFollowUps[0];
             console.log("Focus first on: " + followUp.text);
             console.log("Do not create new work until this open follow-up has been acted on or deliberately closed.");
+        } else if (incompleteProspects.length > 0) {
+            console.log("Focus first on: complete discovery for " + (incompleteProspects[0].name || "the active prospect") + " before recommending a solution.");
         } else if (openOpps.length > 0) {
             console.log("Focus on converting the open opportunity: " + openOpps[0].text);
         } else {
@@ -2690,10 +2692,20 @@ if (lower === "heartbeat" || lower === "cofounder heartbeat") {
         console.log("- " + prospects.length + " prospects are recorded.");
 
         console.log("\nGAP");
-        const incomplete = prospects.filter(p => p.qualification && p.qualification.status !== "QUALIFIED");
+        const incomplete = incompleteProspects;
         if (incomplete.length > 0) {
-            const missing = incomplete[0].qualification.missing || [];
-            console.log("Prospect discovery is incomplete. Missing: " + (missing.join(", ") || "additional qualification data") + ".");
+            const prospect = incomplete[0];
+            const discovery = prospect.discovery || {};
+            const missing = prospect.qualification && Array.isArray(prospect.qualification.missing)
+                ? prospect.qualification.missing
+                : [
+                    { label: "problem", value: discovery.problem },
+                    { label: "impact", value: discovery.impact },
+                    { label: "current solution", value: discovery.currentSolution },
+                    { label: "desired outcome", value: discovery.desiredOutcome },
+                    { label: "decision maker", value: discovery.decisionMaker }
+                ].filter(item => !String(item.value || "").trim()).map(item => item.label);
+            console.log("Prospect discovery is incomplete for " + (prospect.name || "the active prospect") + ". Missing: " + (missing.join(", ") || "additional qualification data") + ".");
         } else {
             console.log("No major prospect qualification gap is recorded.");
         }
@@ -2777,6 +2789,8 @@ if (lower === "heartbeat" || lower === "cofounder heartbeat") {
             console.log("Gather the missing prospect qualification evidence: impact, current solution, desired outcome and decision maker.");
         } else if (openFollowUps.length > 0) {
             console.log("Review and act on: " + openFollowUps[0].text);
+        } else if (incompleteProspects.length > 0) {
+            console.log("Gather missing discovery evidence for " + (incompleteProspects[0].name || "the active prospect") + "; do not recommend a final solution until qualification is complete.");
         } else {
             console.log("Choose and record one concrete next action.");
         }
