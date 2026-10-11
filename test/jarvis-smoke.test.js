@@ -187,7 +187,7 @@ test('buyer confirmation explicitly records qualification after discovery review
       desiredOutcome: 'Automate routine follow-up and tracking',
       decisionMaker: 'Operations manager'
     }),
-    'prospect qualification\\nconfirm prospect qualification\\n'
+    'prospect qualification\nconfirm prospect qualification\n'
   );
 
   assert.equal(result.status, 0);
@@ -201,7 +201,7 @@ test('buyer confirmation explicitly records qualification after discovery review
 test('buyer confirmation cannot qualify a prospect with missing discovery fields', () => {
   const { result, business } = runIsolatedJarvis(
     prospectFixture({ problem: 'A recorded problem' }),
-    'confirm prospect qualification\\n'
+    'confirm prospect qualification\n'
   );
 
   assert.equal(result.status, 0);
@@ -373,7 +373,7 @@ test('cofounder lets newer qualification evidence supersede an older qualificati
         }
       ]
     },
-    'prospect qualification\nrecommend\n',
+    'prospect qualification\nconfirm prospect qualification\nrecommend\n',
     {
       lessons: [
         {
@@ -526,7 +526,7 @@ test('commercial assessment rejects a QUALIFIED status without buyer-confirmatio
   });
   fixture.prospects[0].qualification = { status: 'QUALIFIED', missing: [] };
 
-  const { result } = runIsolatedJarvis(fixture, 'commercial assessment\\n');
+  const { result } = runIsolatedJarvis(fixture, 'commercial assessment\n');
 
   assert.equal(result.status, 0);
   assert.match(result.stdout ?? '', /JUDGEMENT: INVESTIGATE/);
@@ -542,7 +542,7 @@ test('run cycle does not auto-qualify complete but unconfirmed discovery', () =>
       desiredOutcome: 'Automate routine follow-up and tracking',
       decisionMaker: 'Operations manager'
     }),
-    'cycle\\n'
+    'cycle\n'
   );
 
   assert.equal(result.status, 0);
