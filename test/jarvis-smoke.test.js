@@ -460,7 +460,7 @@ test('commercial assessment investigates when value is clear but money is unknow
   assert.match(result.stdout ?? '', /External action: BLOCKED/);
 });
 
-test('commercial assessment can pursue when evidence and strategic fit are strong', () => {
+test('commercial assessment requires recorded qualification before pursuit', () => {
   const { result } = runIsolatedJarvis(
     prospectFixture({
       problem: 'Manual customer follow-up is consuming staff time',
@@ -476,11 +476,34 @@ test('commercial assessment can pursue when evidence and strategic fit are stron
   );
 
   assert.equal(result.status, 0);
-  assert.match(result.stdout ?? '', /JUDGEMENT: PURSUE/);
+  assert.match(result.stdout ?? '', /JUDGEMENT: INVESTIGATE/);
   assert.match(result.stdout ?? '', /STRATEGIC FIT:/);
   assert.match(result.stdout ?? '', /External action: BLOCKED/);
 });
 
+test('commercial assessment can pursue a qualified prospect when commercial requirements are met', () => {
+  const fixture = prospectFixture({
+    problem: 'Manual customer follow-up is consuming staff time',
+    impact: 'Staff spend 10 hours per week chasing responses',
+    currentSolution: 'Staff use spreadsheets and manual messages',
+    desiredOutcome: 'Automate routine follow-up and tracking',
+    decisionMaker: 'Operations manager',
+    budget: 'R15000',
+    timeline: 'Within 30 days',
+    strategicFit: 'AI automation matches Zayzana commercial focus'
+  });
+  fixture.prospects[0].qualification = { status: 'QUALIFIED' };
+
+  const { result } = runIsolatedJarvis(
+    fixture,
+    'commercial assessment\n'
+  );
+
+  assert.equal(result.status, 0);
+  assert.match(result.stdout ?? '', /JUDGEMENT: PURSUE/);
+  assert.match(result.stdout ?? '', /STRATEGIC FIT:/);
+  assert.match(result.stdout ?? '', /External action: BLOCKED/);
+});
 test('prospect intelligence rejects weak research as insufficient evidence', () => {
   const { result } = runIsolatedJarvis(
     prospectFixture(),

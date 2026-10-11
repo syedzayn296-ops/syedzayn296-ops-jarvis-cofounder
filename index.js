@@ -4236,7 +4236,10 @@ function commercialAssessment() {
     let nextAction = "Complete the missing commercial discovery before deciding whether to pursue.";
 
     if (evidenceStatus === "STRONG") {
-        if (!hasBudget || !hasTimeline) {
+        if (prospect.qualification?.status !== "QUALIFIED") {
+            judgement = "INVESTIGATE";
+            nextAction = "Run prospect qualification using the recorded discovery evidence before recommending pursuit.";
+        } else if (!hasBudget || !hasTimeline) {
             judgement = "INVESTIGATE";
             nextAction = "Confirm commercial constraints, especially budget and timeline, before recommending pursuit.";
         } else if (!hasStrategicFit) {
