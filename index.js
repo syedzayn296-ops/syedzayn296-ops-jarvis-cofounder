@@ -2996,24 +2996,31 @@ if (input === "run cycle" || input === "cycle") {
     }
 
     const qualification = prospect.qualification || {};
+    const buyerConfirmationRecorded =
+        qualification.status === "QUALIFIED" &&
+        qualification.confirmationSource === "ZAYN_CONFIRMED_BUYER_EVIDENCE" &&
+        Boolean(qualification.confirmedAt);
 
-    if (qualification.status !== "QUALIFIED") {
+    if (!buyerConfirmationRecorded) {
         console.log("STAGE: QUALIFICATION");
         console.log("--------------------");
-        console.log("Core discovery evidence is complete.");
-        console.log("Cofounder is qualifying the prospect automatically.");
+        console.log("Core discovery fields are complete, but buyer confirmation is not recorded.");
 
-        prospect.qualification = {
-            status: "QUALIFIED",
-            checkedAt: new Date().toISOString(),
-            missing: []
-        };
+        if (qualification.status !== "READY FOR CONFIRMATION") {
+            prospect.qualification = {
+                status: "READY FOR CONFIRMATION",
+                checkedAt: new Date().toISOString(),
+                missing: [],
+                note: "Core discovery fields are present; buyer confirmation is still required."
+            };
+            saveJson("business.json", businessState);
+        }
 
-        saveJson("business.json", businessState);
-
-        console.log("Qualification: QUALIFIED");
-        console.log("Continuing to commercial review...");
+        console.log("Qualification: READY FOR CONFIRMATION");
+        console.log("Next action: confirm these details with the buyer, then run 'confirm prospect qualification'.");
+        console.log("No commercial recommendation was made.");
         console.log("");
+        return;
     }
 
     console.log("STAGE: COMMERCIAL REVIEW");
@@ -3296,11 +3303,83 @@ if (input === "commercial brain" || input === "commercial") { commercialBrain.an
         }
 
         prospect.discovery[fieldMap[field]] = value;
+
+        if (prospect.qualification) {
+            prospect.qualification = {
+                status: "NEEDS RECONFIRMATION",
+                checkedAt: new Date().toISOString(),
+                missing: [],
+                note: "Discovery changed after qualification review; rerun qualification and reconfirm buyer evidence."
+            };
+        }
+
         saveJson(businessFile, business);
 
         console.log(`JARVIS > Discovery saved: ${fieldMap[field]}`);
+        if (prospect.qualification?.status === "NEEDS RECONFIRMATION") {
+            console.log("Qualification invalidated because discovery changed. Rerun prospect qualification.");
+        }
         return true;
     }
+    if (lower === "confirm prospect qualification" || lower === "confirm qualification") {
+        const activeProspects = business.prospects.filter(
+            (item) => item.status !== "CLOSED"
+        );
+
+        if (activeProspects.length === 0) {
+            console.log("\nJARVIS > No active prospect found.");
+            return true;
+        }
+
+        const prospect = resolveActiveProspect(business);
+        if (!prospect) return true;
+
+        const d = prospect.discovery || {};
+        const requiredFields = [
+            ["problem", d.problem],
+            ["impact", d.impact],
+            ["current solution", d.currentSolution],
+            ["desired outcome", d.desiredOutcome],
+            ["decision maker", d.decisionMaker]
+        ];
+        const missing = requiredFields
+            .filter((item) => typeof item[1] !== "string" || !item[1].trim())
+            .map((item) => item[0]);
+
+        console.log("\nJARVIS BUYER CONFIRMATION");
+        console.log("------------------------");
+        console.log("Prospect: " + (prospect.name || "Unknown"));
+
+        if (missing.length > 0) {
+            console.log("Confirmation blocked. Missing core discovery fields: " + missing.join(", "));
+            console.log("Run prospect discovery and prospect qualification first.");
+            return true;
+        }
+
+        if (prospect.qualification?.status !== "READY FOR CONFIRMATION") {
+            console.log("Confirmation blocked. Run 'prospect qualification' first and review the recorded fields.");
+            console.log("Only use this command after the buyer has confirmed the recorded information.");
+            return true;
+        }
+
+        const confirmedAt = new Date().toISOString();
+        prospect.qualification = {
+            status: "QUALIFIED",
+            checkedAt: prospect.qualification.checkedAt || confirmedAt,
+            confirmedAt,
+            confirmationSource: "ZAYN_CONFIRMED_BUYER_EVIDENCE",
+            confirmedBy: "Zayn",
+            missing: []
+        };
+        saveJson(businessFile, business);
+
+        console.log("QUALIFICATION: QUALIFIED");
+        console.log("Buyer confirmation recorded by Zayn.");
+        console.log("Commercial review may proceed; external actions still require approval.");
+        console.log("Reminder: only record this confirmation after checking the details with the buyer.");
+        return true;
+    }
+
     // STEP 19: PROSPECT QUALIFICATION
     if (
         lower === "prospect qualification" ||
@@ -3345,17 +3424,30 @@ if (input === "commercial brain" || input === "commercial") { commercialBrain.an
         console.log(`Prospect: ${prospect.name}`);
 
         if (missing.length === 0) {
-            prospect.qualification = {
-                status: "QUALIFIED",
-                checkedAt: new Date().toISOString(),
-                missing: []
-            };
+            const buyerConfirmationRecorded =
+                prospect.qualification?.status === "QUALIFIED" &&
+                prospect.qualification?.confirmationSource === "ZAYN_CONFIRMED_BUYER_EVIDENCE" &&
+                Boolean(prospect.qualification?.confirmedAt);
 
-            saveJson(businessFile, business);
+            if (!buyerConfirmationRecorded) {
+                prospect.qualification = {
+                    status: "READY FOR CONFIRMATION",
+                    checkedAt: new Date().toISOString(),
+                    missing: [],
+                    note: "Core discovery fields are present; buyer confirmation is still required."
+                };
+                saveJson(businessFile, business);
+            }
 
-            console.log("\nQUALIFICATION: QUALIFIED");
-            console.log("Enough core discovery information has been recorded.");
-            console.log("Budget and timeline can still be confirmed before a commercial proposal.");
+            if (buyerConfirmationRecorded) {
+                console.log("\nQUALIFICATION: QUALIFIED");
+                console.log("Recorded buyer confirmation is present.");
+            } else {
+                console.log("\nQUALIFICATION: READY FOR CONFIRMATION");
+                console.log("Core discovery fields are recorded, but they are not automatically treated as buyer-verified.");
+                console.log("Confirm these details with the buyer, then run: confirm prospect qualification");
+            }
+            console.log("Budget and timeline must still be confirmed before a commercial proposal.");
         } else {
             prospect.qualification = {
                 status: "NEEDS MORE DISCOVERY",
@@ -4236,7 +4328,14 @@ function commercialAssessment() {
     let nextAction = "Complete the missing commercial discovery before deciding whether to pursue.";
 
     if (evidenceStatus === "STRONG") {
-        if (!hasBudget || !hasTimeline) {
+        if (
+            prospect.qualification?.status !== "QUALIFIED" ||
+            prospect.qualification?.confirmationSource !== "ZAYN_CONFIRMED_BUYER_EVIDENCE" ||
+            !prospect.qualification?.confirmedAt
+        ) {
+            judgement = "INVESTIGATE";
+            nextAction = "Run prospect qualification using the recorded discovery evidence before recommending pursuit.";
+        } else if (!hasBudget || !hasTimeline) {
             judgement = "INVESTIGATE";
             nextAction = "Confirm commercial constraints, especially budget and timeline, before recommending pursuit.";
         } else if (!hasStrategicFit) {
