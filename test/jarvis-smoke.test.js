@@ -535,7 +535,7 @@ test('editing discovery invalidates prior buyer confirmation', () => {
 
   const { result, business } = runIsolatedJarvis(
     fixture,
-    'discovery problem Updated problem\\ncommercial assessment\\n'
+    'discovery problem Updated problem\ncommercial assessment\n'
   );
 
   assert.equal(result.status, 0);
