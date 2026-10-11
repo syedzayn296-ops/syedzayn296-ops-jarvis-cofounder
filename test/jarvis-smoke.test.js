@@ -514,6 +514,37 @@ test('commercial assessment requires recorded qualification before pursuit', () 
   assert.match(result.stdout ?? '', /External action: BLOCKED/);
 });
 
+test('editing discovery invalidates prior buyer confirmation', () => {
+  const fixture = prospectFixture({
+    problem: 'Original buyer-confirmed problem',
+    impact: 'Staff lose 10 hours weekly',
+    currentSolution: 'Manual spreadsheet workflow',
+    desiredOutcome: 'Automate follow-up',
+    decisionMaker: 'Operations manager',
+    budget: 'R15000',
+    timeline: 'Within 30 days',
+    strategicFit: 'AI automation matches Zayzana commercial focus'
+  });
+  fixture.prospects[0].qualification = {
+    status: 'QUALIFIED',
+    checkedAt: '2026-10-11T00:00:00.000Z',
+    confirmedAt: '2026-10-11T00:00:00.000Z',
+    confirmationSource: 'ZAYN_CONFIRMED_BUYER_EVIDENCE',
+    missing: []
+  };
+
+  const { result, business } = runIsolatedJarvis(
+    fixture,
+    'discovery problem Updated problem\\ncommercial assessment\\n'
+  );
+
+  assert.equal(result.status, 0);
+  assert.match(result.stdout ?? '', /Qualification invalidated because discovery changed/);
+  assert.match(result.stdout ?? '', /JUDGEMENT: INVESTIGATE/);
+  assert.equal(business.prospects[0].qualification.status, 'NEEDS RECONFIRMATION');
+  assert.equal(business.prospects[0].qualification.confirmationSource, undefined);
+});
+
 test('commercial assessment rejects a QUALIFIED status without buyer-confirmation provenance', () => {
   const fixture = prospectFixture({
     problem: 'Manual customer follow-up is consuming staff time',
