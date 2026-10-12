@@ -1,6 +1,6 @@
 const fs = require("fs");
 const readline = require("readline");
-const { exec } = require("child_process");
+const { exec, spawn } = require("child_process");
 
 const memoryFile = "memory.json";
 const tasksFile = "tasks.json";
@@ -1571,105 +1571,31 @@ function showProspectDiscovery() {
 // --------------------------------------------------
 
 function smartUnderstand(input) {
-    const lower = input.toLowerCase();
+    const lower = input.toLowerCase().trim();
 
-    if (
-        lower.includes("prospect intelligence") ||
-        lower.includes("prospect analysis") ||
-        lower.includes("what do we know about the prospect") ||
-        lower.includes("what do we know about this prospect") ||
-        lower.includes("what do we need to find out") ||
-        lower.includes("how can zayzana help this prospect") ||
-        lower.includes("what should we ask the prospect")
-    ) {
-        return "PROSPECT_INTELLIGENCE";
-    }
+    // Explicit commands only. Ordinary questions go to Gemini.
+    const commands = {
+        "prospect intelligence": "PROSPECT_INTELLIGENCE",
+        "prospect analysis": "PROSPECT_INTELLIGENCE",
+        "operating brain": "OPERATING",
+        "zayzana strategy": "OPERATING",
+        "zayzana operating": "OPERATING",
+        "business strategy": "OPERATING",
+        "zayzana focus": "FOCUS",
+        "focus brain": "FOCUS",
+        "action brain": "ACTION",
+        "next action": "ACTION",
+        "next step": "ACTION",
+        "business priorities": "PRIORITIES",
+        "priorities": "PRIORITIES",
+        "business": "BUSINESS",
+        "business brain": "BUSINESS",
+        "business overview": "BUSINESS",
+        "show business": "BUSINESS"
+    };
 
-    if (
-        lower.includes("operating brain") ||
-        lower.includes("zayzana strategy") ||
-        lower.includes("zayzana operating") ||
-        lower.includes("how is zayzana doing") ||
-        lower.includes("how are we doing") ||
-        lower.includes("business strategy")
-    ) {
-        return "OPERATING";
-    }
-
-    if (
-        lower.includes("zayzana focus") ||
-        lower.includes("what is the focus") ||
-        lower.includes("what should zayzana focus on") ||
-        lower.includes("what should zayzayna focus on") ||
-        lower.includes("where should we focus")
-    ) {
-        return "FOCUS";
-    }
-
-    if (
-        lower.includes("action brain") ||
-        lower.includes("what should i do") ||
-        lower.includes("what should we do") ||
-        lower.includes("next action") ||
-        lower.includes("next step") ||
-        lower.includes("what next")
-    ) {
-        return "ACTION";
-    }
-
-    if (
-        lower.includes("priorities") ||
-        lower.includes("business priorities")
-    ) {
-        return "PRIORITIES";
-    }
-
-    if (
-        lower === "business" ||
-        lower === "business brain" ||
-        lower.includes("business overview") ||
-        lower.includes("show business")
-    ) {
-        return "BUSINESS";
-    }
-
-    if (
-        lower.includes("prospect") ||
-        lower.includes("client") ||
-        lower.includes("customer") ||
-        lower.includes("lead")
-    ) {
-        return "BUSINESS";
-    }
-
-    if (lower.includes("opportunit")) {
-        return "BUSINESS";
-    }
-
-    if (
-        lower.includes("offer") ||
-        lower.includes("sell")
-    ) {
-        return "BUSINESS";
-    }
-
-    if (
-        lower.includes("follow up") ||
-        lower.includes("follow-up")
-    ) {
-        return "BUSINESS";
-    }
-
-    if (
-        lower.includes("revenue") ||
-        lower.includes("money")
-    ) {
-        return "BUSINESS";
-    }
-
-    return null;
+    return commands[lower] || null;
 }
-
 // --------------------------------------------------
 // DECISION LAYER
 // --------------------------------------------------
@@ -1900,9 +1826,158 @@ function showHeartbeat() {
 // DIRECT COMMANDS
 // --------------------------------------------------
 
+
+// GEMINI CONVERSATION VIA THE EXISTING OMNIROUTE INSTALLATION
+const conversationHistory = [];
+
+function getCofounderContext() {
+    const files = ["business.json", "cofounder-state.json", "memory.json"];
+
+    const savedContext = files.map(file => {
+        try {
+            const raw = fs.readFileSync(file, "utf8");
+            return "--- " + file + " ---\n" + raw.slice(0, 6000);
+        } catch (error) {
+            return "";
+        }
+    }).filter(Boolean).join("\n\n");
+
+    return [
+        "VERIFIED COMPANY CONTEXT:",
+        "- Company: Zayzana Tech, South Africa.",
+        "- Tagline: We find. We build. We solve.",
+        "- Priority: revenue, prospect acquisition, qualification, offer and pricing, conversion and follow-up, delivery, then automation.",
+        "- Budget is constrained; prefer free or low-cost tools.",
+        "- Existing projects include Taalhuis, Fishing Logbook, Sizani, and Cofounder.",
+        "- Existing projects demonstrate work, but do not assume they prove an untested commercial capability.",
+        "",
+        "CURRENT LOCAL RECORDS:",
+        savedContext || "No local context files could be read."
+    ].join("\n").slice(0, 18000);
+}
+
+function askGemini(prompt) {
+    return new Promise((resolve, reject) => {
+        const history = conversationHistory.map(turn =>
+            "USER: " + turn.user + "\nCOFOUNDER: " + turn.assistant
+        ).join("\n\n");
+
+        const message = [
+            "You are Cofounder, Zayzana Tech's strategic AI partner in South Africa.",
+            "Use the company context and conversation history below.",
+            "Answer follow-up questions using earlier turns. Do not ask the user to repeat facts already supplied.",
+            "Distinguish verified facts from assumptions and unknowns. Never invent capabilities, prospects, revenue, pricing evidence, or completed actions.",
+            "Challenge weak assumptions respectfully. Give one practical recommendation and explain its trade-off.",
+            "Discover first. Qualify second. Recommend third. Execute only after Zayn approves.",
+            "",
+            getCofounderContext(),
+            "",
+            "RECENT CONVERSATION:",
+            history || "No previous turns in this session.",
+            "",
+            "LATEST MESSAGE FROM ZAYN:",
+            String(prompt)
+        ].join("\n");
+
+        const path = require("path");
+        const os = require("os");
+        const promptFile = path.join(
+            os.tmpdir(),
+            "cofounder-prompt-" + process.pid + "-" + Date.now() + ".txt"
+        );
+
+        try {
+            fs.writeFileSync(promptFile, message, "utf8");
+        } catch (error) {
+            reject(error);
+            return;
+        }
+
+        const omniRouteScript = require("path").join(
+            process.env.APPDATA,
+            "npm",
+            "node_modules",
+            "omniroute",
+            "bin",
+            "omniroute.mjs"
+        );
+
+        const child = spawn(process.execPath, [
+            omniRouteScript,
+            "chat",
+            "--file",
+            promptFile,
+            "--no-history"
+        ], {
+            windowsHide: true,
+            stdio: ["ignore", "pipe", "pipe"]
+        });
+
+        let stdout = "";
+        let stderr = "";
+        let settled = false;
+
+        const cleanup = () => {
+            try {
+                fs.unlinkSync(promptFile);
+            } catch (_) {}
+        };
+
+        child.stdout.on("data", data => stdout += data.toString());
+        child.stderr.on("data", data => stderr += data.toString());
+
+        child.on("error", error => {
+            if (settled) return;
+            settled = true;
+            cleanup();
+            reject(error);
+        });
+
+        child.on("close", code => {
+            cleanup();
+
+            if (settled) return;
+            settled = true;
+
+            const response = stdout
+                .replace(/^.*Loaded env from .*$/gm, "")
+                .trim();
+
+            if (!response) {
+                reject(new Error(
+                    "OmniRoute returned no answer (exit code " + code + ").\n" +
+                    "STDERR: " + stderr.trim() + "\n" +
+                    "STDOUT: " + stdout.trim()
+                ));
+                return;
+            }
+
+            conversationHistory.push({
+                user: String(prompt),
+                assistant: response
+            });
+
+            if (conversationHistory.length > 6) {
+                conversationHistory.splice(
+                    0,
+                    conversationHistory.length - 6
+                );
+            }
+
+            resolve(response);
+        });
+    });
+}
+
 function handleCommand(input) {
     const trimmed = input.trim();
+    if (!trimmed) return true;
+
     const lower = trimmed.toLowerCase();
+    if (lower === "standby" || lower === "stand by" || lower === "hold") {
+        console.log("COFOUNDER > Understood. Standing by. No action will be taken without a new instruction.");
+        return true;
+    }
     if (lower.startsWith("select prospect ")) {
         const requestedName = trimmed.slice("select prospect ".length).trim();
         const open = (business.prospects || []).filter(item => item.status !== "CLOSED");
@@ -3847,11 +3922,11 @@ if (input === "commercial brain" || input === "commercial") { commercialBrain.an
         return true;
     }
 
-    console.log(
-        "JARVIS > I understand the command, but I don't have an action for it yet."
-    );
-
-    return true;
+    console.log("COFOUNDER > Thinking...");
+    return askGemini(trimmed)
+        .then(response => console.log("\nCOFOUNDER > " + response))
+        .catch(error => console.log("\nCOFOUNDER > Gemini request failed: " + error.message))
+        .then(() => true);
 }
 
 // --------------------------------------------------
@@ -3873,9 +3948,16 @@ const rl = readline.createInterface({
 
 rl.prompt();
 
-rl.on("line", (line) => {
-    handleCommand(line);
-    rl.prompt();
+rl.on("line", async (line) => {
+    rl.pause();
+    try {
+        await handleCommand(line);
+    } catch (error) {
+        console.log("\nCOFOUNDER > Command failed: " + error.message);
+    } finally {
+        rl.resume();
+        rl.prompt();
+    }
 }).on("close", () => {
     console.log("\nJARVIS > Session ended.");
 });
@@ -4363,6 +4445,3 @@ function commercialAssessment() {
     console.log("External action: BLOCKED");
     console.log("");
 }
-
-
-

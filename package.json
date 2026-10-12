@@ -1,13 +1,13 @@
 {
-  "name": "jarvis",
+  "name": "zayzana-cofounder",
   "version": "1.0.0",
-  "description": "",
+  "description": "Zayzana Tech local AI cofounder and commercial decision partner",
   "main": "index.js",
   "scripts": {
     "test": "node --test test/jarvis-smoke.test.js"
   },
   "keywords": [],
-  "author": "",
+  "author": "Zayn & Cofounder",
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
