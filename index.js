@@ -49,7 +49,20 @@ const speechSettings = (() => {
 let speechQueue = Promise.resolve();
 
 function speakText(text) {
-    const spokenText = String(text || "").replace(/\s+/g, " ").trim();
+    // Convert common Markdown formatting into natural speech instead of reading symbols aloud.
+    const spokenText = String(text || "")
+        .replace(/^\s{0,3}#{1,6}\s+/gm, "")
+        .replace(/\*\*(.*?)\*\*/gs, "$1")
+        .replace(/__(.*?)__/gs, "$1")
+        .replace(/\*(.*?)\*/gs, "$1")
+        .replace(/_(.*?)_/gs, "$1")
+        .replace(/~~(.*?)~~/gs, "$1")
+        .replace(/\[(.*?)\]\((https?:\/\/[^\s)]+)\)/g, "$1")
+        .replace(/^\s*[-*+]\s+/gm, "")
+        .replace(/^\s*>\s?/gm, "")
+        .replace(/[`]/g, "")
+        .replace(/\s+/g, " ")
+        .trim();
     if (!speechSettings.speechEnabled || !spokenText) return speechQueue;
 
     const encodedText = Buffer.from(spokenText, "utf8").toString("base64");
