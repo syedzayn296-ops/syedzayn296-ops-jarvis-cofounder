@@ -28,6 +28,53 @@ function loadJson(file, fallback) {
 function saveJson(file, data) {
     fs.writeFileSync(file, JSON.stringify(data, null, 2));
 }
+
+// --------------------------------------------------
+// PERMANENT WINDOWS SPEECH (enabled by default)
+// --------------------------------------------------
+const speechSettingsFile = "cofounder-settings.json";
+const speechSettings = (() => {
+    try {
+        const current = fs.existsSync(speechSettingsFile)
+            ? JSON.parse(fs.readFileSync(speechSettingsFile, "utf8"))
+            : {};
+        const settings = { speechEnabled: current.speechEnabled !== false };
+        fs.writeFileSync(speechSettingsFile, JSON.stringify(settings, null, 2));
+        return settings;
+    } catch (_) {
+        return { speechEnabled: true };
+    }
+})();
+
+let speechQueue = Promise.resolve();
+
+function speakText(text) {
+    const spokenText = String(text || "").replace(/\s+/g, " ").trim();
+    if (!speechSettings.speechEnabled || !spokenText) return speechQueue;
+
+    const encodedText = Buffer.from(spokenText, "utf8").toString("base64");
+    const script = "Add-Type -AssemblyName System.Speech; " +
+        "$s = New-Object System.Speech.Synthesis.SpeechSynthesizer; " +
+        "$t = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('" +
+        encodedText + "')); $s.Speak($t); $s.Dispose();";
+
+    speechQueue = speechQueue.then(() => new Promise(resolve => {
+        const speaker = spawn("powershell.exe", [
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy", "Bypass",
+            "-Command", script
+        ], { windowsHide: true, stdio: "ignore" });
+
+        speaker.on("error", error => {
+            console.warn("COFOUNDER speech unavailable: " + error.message);
+            resolve();
+        });
+        speaker.on("close", () => resolve());
+    }));
+    return speechQueue;
+}
+
 function resolveActiveProspect(data, options = {}) {
     const prospects = Array.isArray(data?.prospects) ? data.prospects : [];
     const open = prospects.filter(item => item.status !== "CLOSED");
@@ -3950,16 +3997,32 @@ rl.prompt();
 
 rl.on("line", async (line) => {
     rl.pause();
+    const originalLog = console.log;
+    const responseLines = [];
+
+    // Keep normal on-screen output while collecting one complete response for speech.
+    console.log = (...args) => {
+        originalLog(...args);
+        responseLines.push(args.map(value =>
+            typeof value === "string" ? value : String(value)
+        ).join(" "));
+    };
+
     try {
         await handleCommand(line);
     } catch (error) {
         console.log("\nCOFOUNDER > Command failed: " + error.message);
     } finally {
+        console.log = originalLog;
+        const spokenResponse = responseLines
+            .filter(text => !/COFOUNDER > Thinking\.\.\./i.test(text))
+            .join(". ");
+        if (spokenResponse.trim()) await speakText(spokenResponse);
         rl.resume();
         rl.prompt();
     }
 }).on("close", () => {
-    console.log("\nJARVIS > Session ended.");
+    console.log("\nCOFOUNDER > Session ended.");
 });
 
 
