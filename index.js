@@ -3987,6 +3987,8 @@ console.log("Zayzana local business assistant");
 console.log("Step 18 - Prospect Intelligence");
 console.log("");
 
+speakText("Cofounder is online. Zayzana Tech's local business assistant is ready. What are we working on?");
+
 const rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout,
