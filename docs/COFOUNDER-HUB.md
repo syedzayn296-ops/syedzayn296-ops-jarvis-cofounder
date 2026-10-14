@@ -7,7 +7,8 @@
 - **Working branch for the current code line:** `development`
 - **Code baseline before the hub documentation commits:** `e445f0d` — Strip Markdown formatting from spoken responses. Documentation-only commits have advanced remote `development` beyond that baseline (hub, README link, and subsequent hub corrections). The local source/test changes described below are still not synced. The local source/test changes described below are still not synced.
 - **Local working copy:** `C:\Users\ZAYZA\JARVIS-Cofounder-Clean`
-- **Operating principle:** Discover first. Qualify second. Recommend third. Execute only after Zayn approves.
+- **Operating principle:** Discover first. Qualify second. Recommend third. Execute only after Zayn approves.  
+**Active cleanup task:** [Issue #4 — Reconcile local patch and verify provider routing](https://github.com/syedzayn296-ops/syedzayn296-ops-jarvis-cofounder/issues/4).
 
 ## 1. Current state — read this first
 
