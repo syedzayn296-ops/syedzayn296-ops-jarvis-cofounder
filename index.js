@@ -1887,14 +1887,11 @@ function showHeartbeat() {
 // --------------------------------------------------
 
 
-// AI CONVERSATION PROVIDERS (ANTIGRAVITY FIRST WITH OMNIROUTE FALLBACK)
-const path = require("path");
-const os = require("os");
+// DIRECT GEMINI API + EXPLICIT LOCAL OLLAMA (NO AUTOMATIC FALLBACK)
 const conversationHistory = [];
 
 function getCofounderContext() {
     const files = ["business.json", "cofounder-state.json", "memory.json"];
-
     const savedContext = files.map(file => {
         try {
             const raw = fs.readFileSync(file, "utf8");
@@ -1903,7 +1900,6 @@ function getCofounderContext() {
             return "";
         }
     }).filter(Boolean).join("\n\n");
-
     return [
         "VERIFIED COMPANY CONTEXT:",
         "- Company: Zayzana Tech, South Africa.",
@@ -1922,7 +1918,6 @@ function buildCofounderMessage(prompt) {
     const history = conversationHistory.map(turn =>
         "USER: " + turn.user + "\nCOFOUNDER: " + turn.assistant
     ).join("\n\n");
-
     return [
         "You are Cofounder, Zayzana Tech's strategic AI partner in South Africa.",
         "Use the company context and conversation history below.",
@@ -1942,351 +1937,110 @@ function buildCofounderMessage(prompt) {
 }
 
 function recordConversationTurn(prompt, response) {
-    conversationHistory.push({
-        user: String(prompt),
-        assistant: response
-    });
-
+    conversationHistory.push({ user: String(prompt), assistant: response });
     if (conversationHistory.length > 6) {
-        conversationHistory.splice(
-            0,
-            conversationHistory.length - 6
-        );
+        conversationHistory.splice(0, conversationHistory.length - 6);
     }
 }
 
-function getAntigravityBin() {
-    if (process.env.ANTIGRAVITY_BIN) {
-        return process.env.ANTIGRAVITY_BIN;
-    }
-    const localAppData = process.env.LOCALAPPDATA || (process.env.USERPROFILE ? path.join(process.env.USERPROFILE, "AppData", "Local") : "");
-    return localAppData ? path.join(localAppData, "agy", "bin", "agy.exe") : "";
-}
-
-// Track the active AI subprocess so local stop commands can interrupt it.
-let activeAiChild = null;
-let activeAiProvider = null;
+let activeAiController = null;
 let activeAiRequest = false;
 let activeRequestCancelled = false;
-
-function isQuotaExhaustion(error) {
-    const message = String(error && error.message ? error.message : error || "");
-    return /individual quota reached|resource_exhausted|quota.{0,30}(exhausted|reached)|(?:http|error|code)?\s*429\b/i.test(message);
-}
 
 function cancelActiveAiRequest() {
     if (!activeAiRequest) {
         console.log("COFOUNDER > No AI request is currently running.");
         return true;
     }
-
     activeRequestCancelled = true;
-    if (activeAiChild && !activeAiChild.killed) {
-        try {
-            activeAiChild.kill();
-        } catch (_) {}
+    if (activeAiController && !activeAiController.signal.aborted) {
+        activeAiController.abort(new Error("Request cancelled by Zayn."));
     }
-    console.log("COFOUNDER > Stop requested. The current AI request is being cancelled; no fallback provider will be called.");
+    console.log("COFOUNDER > Stop requested. The current AI request is being cancelled.");
     return true;
 }
 
-function callAntigravity(message) {
-    return new Promise((resolve, reject) => {
-        const maxPromptLength = Number(process.env.ANTIGRAVITY_MAX_PROMPT_LENGTH) || 30000;
-        if (typeof message !== "string" || message.length > maxPromptLength) {
-            reject(new Error("Prompt is oversized for Antigravity CLI (" + (message ? message.length : 0) + " > " + maxPromptLength + ")"));
-            return;
-        }
-
-        const bin = getAntigravityBin();
-        if (!bin || (path.isAbsolute(bin) && !fs.existsSync(bin))) {
-            reject(new Error("Antigravity executable not found: " + (bin || "unknown path")));
-            return;
-        }
-
-        const timeoutMs = Number(process.env.ANTIGRAVITY_TIMEOUT_MS) || 45000;
-        const args = [
-            "--sandbox",
-            "--output-format",
-            "text",
-            "--print=" + message
-        ];
-
-        let child;
-        try {
-            if (bin.endsWith(".js")) {
-                child = spawn(process.execPath, [bin, ...args], {
-                    windowsHide: true,
-                    stdio: ["ignore", "pipe", "pipe"]
-                });
-            } else if (process.platform === "win32" && (bin.endsWith(".cmd") || bin.endsWith(".bat"))) {
-                child = spawn(bin, args, {
-                    windowsHide: true,
-                    shell: true,
-                    stdio: ["ignore", "pipe", "pipe"]
-                });
-            } else {
-                child = spawn(bin, args, {
-                    windowsHide: true,
-                    stdio: ["ignore", "pipe", "pipe"]
-                });
-            }
-        } catch (err) {
-            reject(err);
-            return;
-        }
-
-        activeAiChild = child;
-        activeAiProvider = "Antigravity";
-
-        let stdout = "";
-        let stderr = "";
-        let settled = false;
-
-        const timer = setTimeout(() => {
-            if (settled) return;
-            settled = true;
-            try {
-                child.kill();
-            } catch (_) {}
-            reject(new Error("Antigravity request timed out after " + timeoutMs + "ms"));
-        }, timeoutMs);
-
-        child.stdout.on("data", data => {
-            stdout += data.toString();
-        });
-        child.stderr.on("data", data => {
-            stderr += data.toString();
-        });
-
-        child.on("error", error => {
-            clearTimeout(timer);
-            if (activeAiChild === child) {
-                activeAiChild = null;
-                activeAiProvider = null;
-            }
-            if (settled) return;
-            settled = true;
-            try {
-                child.kill();
-            } catch (_) {}
-            reject(error);
-        });
-
-        child.on("close", code => {
-            clearTimeout(timer);
-            if (activeAiChild === child) {
-                activeAiChild = null;
-                activeAiProvider = null;
-            }
-            if (settled) return;
-            settled = true;
-
-            if (code !== 0) {
-                reject(new Error(
-                    "Antigravity exited with code " + code + ".\n" +
-                    "STDERR: " + stderr.trim() + "\n" +
-                    "STDOUT: " + stdout.trim()
-                ));
-                return;
-            }
-
-            const response = stdout.trim();
-            if (!response) {
-                reject(new Error(
-                    "Antigravity returned empty output.\n" +
-                    "STDERR: " + stderr.trim()
-                ));
-                return;
-            }
-
-            resolve(response);
-        });
-    });
-}
-
-function getOmniRouteScript() {
-    if (process.env.OMNIROUTE_SCRIPT) {
-        return process.env.OMNIROUTE_SCRIPT;
+async function requestGemini(message, signal) {
+    const key = process.env.GEMINI_API_KEY;
+    if (!key) {
+        throw new Error("GEMINI_API_KEY is not set. Add a Google Gemini API key or select the local Ollama provider.");
     }
-    const appData = process.env.APPDATA || (process.env.USERPROFILE ? path.join(process.env.USERPROFILE, "AppData", "Roaming") : "");
-    return appData ? path.join(appData, "npm", "node_modules", "omniroute", "bin", "omniroute.mjs") : "";
-}
-
-function callOmniRoute(message) {
-    return new Promise((resolve, reject) => {
-        const promptFile = path.join(
-            os.tmpdir(),
-            "cofounder-prompt-" + process.pid + "-" + Date.now() + ".txt"
-        );
-
-        try {
-            fs.writeFileSync(promptFile, message, "utf8");
-        } catch (error) {
-            reject(error);
-            return;
-        }
-
-        const cleanup = () => {
-            try {
-                fs.unlinkSync(promptFile);
-            } catch (_) {}
-        };
-
-        const timeoutMs = Number(process.env.OMNIROUTE_TIMEOUT_MS) || 45000;
-        let child;
-
-        try {
-            if (process.env.OMNIROUTE_BIN) {
-                const bin = process.env.OMNIROUTE_BIN;
-                const args = ["chat", "--file", promptFile, "--no-history"];
-                if (bin.endsWith(".js")) {
-                    child = spawn(process.execPath, [bin, ...args], {
-                        windowsHide: true,
-                        stdio: ["ignore", "pipe", "pipe"]
-                    });
-                } else if (process.platform === "win32" && (bin.endsWith(".cmd") || bin.endsWith(".bat"))) {
-                    child = spawn(bin, args, {
-                        windowsHide: true,
-                        shell: true,
-                        stdio: ["ignore", "pipe", "pipe"]
-                    });
-                } else {
-                    child = spawn(bin, args, {
-                        windowsHide: true,
-                        stdio: ["ignore", "pipe", "pipe"]
-                    });
-                }
-            } else {
-                const omniRouteScript = getOmniRouteScript();
-                child = spawn(process.execPath, [
-                    omniRouteScript,
-                    "chat",
-                    "--file",
-                    promptFile,
-                    "--no-history"
-                ], {
-                    windowsHide: true,
-                    stdio: ["ignore", "pipe", "pipe"]
-                });
-            }
-        } catch (err) {
-            cleanup();
-            reject(err);
-            return;
-        }
-
-        activeAiChild = child;
-        activeAiProvider = "OmniRoute";
-
-        let stdout = "";
-        let stderr = "";
-        let settled = false;
-
-        const timer = setTimeout(() => {
-            if (settled) return;
-            settled = true;
-            cleanup();
-            try {
-                child.kill();
-            } catch (_) {}
-            reject(new Error("OmniRoute request timed out after " + timeoutMs + "ms"));
-        }, timeoutMs);
-
-        child.stdout.on("data", data => stdout += data.toString());
-        child.stderr.on("data", data => stderr += data.toString());
-
-        child.on("error", error => {
-            clearTimeout(timer);
-            if (activeAiChild === child) {
-                activeAiChild = null;
-                activeAiProvider = null;
-            }
-            if (settled) return;
-            settled = true;
-            cleanup();
-            try {
-                child.kill();
-            } catch (_) {}
-            reject(error);
-        });
-
-        child.on("close", code => {
-            clearTimeout(timer);
-            cleanup();
-            if (activeAiChild === child) {
-                activeAiChild = null;
-                activeAiProvider = null;
-            }
-
-            if (settled) return;
-            settled = true;
-
-            const response = stdout
-                .replace(/^.*Loaded env from .*$/gm, "")
-                .trim();
-
-            if (!response || code !== 0) {
-                reject(new Error(
-                    "OmniRoute returned no answer (exit code " + code + ").\n" +
-                    "STDERR: " + stderr.trim() + "\n" +
-                    "STDOUT: " + stdout.trim()
-                ));
-                return;
-            }
-
-            resolve(response);
-        });
+    const model = process.env.GEMINI_MODEL || "gemini-3.5-flash-lite";
+    const url = "https://generativelanguage.googleapis.com/v1beta/models/" + encodeURIComponent(model) + ":generateContent";
+    const response = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-goog-api-key": key },
+        body: JSON.stringify({ contents: [{ parts: [{ text: message }] }] }),
+        signal
     });
+    const json = await response.json().catch(() => ({}));
+    if (!response.ok) {
+        const detail = json && json.error && json.error.message ? json.error.message : "HTTP " + response.status;
+        throw new Error("Gemini API request failed: " + detail);
+    }
+    const answer = (json.candidates && json.candidates[0] && json.candidates[0].content && json.candidates[0].content.parts || [])
+        .map(part => part.text || "").join("").trim();
+    if (!answer) {
+        throw new Error("Gemini returned an empty answer. Check the selected model and API response.");
+    }
+    return answer;
 }
 
-function askGemini(prompt) {
+async function requestOllama(message, signal) {
+    const host = (process.env.OLLAMA_HOST || "http://127.0.0.1:11434").replace(/\/+$/, "");
+    const model = process.env.OLLAMA_MODEL || "qwen2.5:1.5b";
+    const response = await fetch(host + "/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ model, messages: [{ role: "user", content: message }], stream: false }),
+        signal
+    });
+    const json = await response.json().catch(() => ({}));
+    if (!response.ok) {
+        const detail = json && json.error ? json.error : "HTTP " + response.status;
+        throw new Error("Ollama request failed: " + detail);
+    }
+    const answer = json && json.message && typeof json.message.content === "string" ? json.message.content.trim() : "";
+    if (!answer) {
+        throw new Error("Ollama returned an empty answer. Check that the local model is installed and running.");
+    }
+    return answer;
+}
+
+async function askCofounderAI(prompt) {
     const message = buildCofounderMessage(prompt);
+    const provider = String(process.env.COFOUNDER_PROVIDER || "gemini").trim().toLowerCase();
+    if (provider !== "gemini" && provider !== "ollama") {
+        throw new Error('Unsupported COFOUNDER_PROVIDER "' + provider + '". Choose "gemini" or "ollama".');
+    }
     activeRequestCancelled = false;
     activeAiRequest = true;
-
-    return callAntigravity(message)
-        .then(response => {
-            if (activeRequestCancelled) {
-                throw new Error("Request cancelled by Zayn.");
-            }
-            recordConversationTurn(prompt, response);
-            return response;
-        })
-        .catch(agyError => {
-            if (activeRequestCancelled) {
-                throw new Error("Request cancelled by Zayn. No fallback provider was called.");
-            }
-            if (isQuotaExhaustion(agyError)) {
-                throw new Error(
-                    "Antigravity quota is exhausted. It will not be retried and OmniRoute fallback was skipped. " +
-                    "Use a different available provider or wait for the quota reset."
-                );
-            }
-            return callOmniRoute(message)
-                .then(response => {
-                    if (activeRequestCancelled) {
-                        throw new Error("Request cancelled by Zayn.");
-                    }
-                    recordConversationTurn(prompt, response);
-                    return response;
-                })
-                .catch(omniError => {
-                    if (activeRequestCancelled) {
-                        throw new Error("Request cancelled by Zayn. No fallback provider was called.");
-                    }
-                    throw new Error(
-                        "All AI providers failed.\n" +
-                        "Antigravity: " + agyError.message + "\n" +
-                        "OmniRoute: " + omniError.message
-                    );
-                });
-        })
-        .finally(() => {
-            activeAiRequest = false;
-            activeAiChild = null;
-            activeAiProvider = null;
-        });
+    const controller = new AbortController();
+    activeAiController = controller;
+    const timeoutMs = Number(process.env.COFOUNDER_AI_TIMEOUT_MS) || 45000;
+    const timer = setTimeout(() => {
+        if (!controller.signal.aborted) {
+            controller.abort(new Error(provider + " request timed out after " + timeoutMs + "ms."));
+        }
+    }, timeoutMs);
+    try {
+        const response = provider === "ollama"
+            ? await requestOllama(message, controller.signal)
+            : await requestGemini(message, controller.signal);
+        if (activeRequestCancelled) throw new Error("Request cancelled by Zayn.");
+        recordConversationTurn(prompt, response);
+        return response;
+    } catch (error) {
+        if (activeRequestCancelled) throw new Error("Request cancelled by Zayn.");
+        if (controller.signal.aborted && controller.signal.reason instanceof Error) {
+            throw controller.signal.reason;
+        }
+        throw error;
+    } finally {
+        clearTimeout(timer);
+        if (activeAiController === controller) activeAiController = null;
+        activeAiRequest = false;
+    }
 }
 
 function handleCommand(input) {
@@ -4246,9 +4000,9 @@ if (input === "commercial brain" || input === "commercial") { commercialBrain.an
     }
 
     console.log("COFOUNDER > Thinking...");
-    return askGemini(trimmed)
+    return askCofounderAI(trimmed)
         .then(response => console.log("\nCOFOUNDER > " + response))
-        .catch(error => console.log("\nCOFOUNDER > Gemini request failed: " + error.message))
+        .catch(error => console.log("\nCOFOUNDER > AI request failed: " + error.message))
         .then(() => true);
 }
 
