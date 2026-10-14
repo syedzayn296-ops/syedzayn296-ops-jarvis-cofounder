@@ -5,7 +5,7 @@
 
 - **Repository:** https://github.com/syedzayn296-ops/syedzayn296-ops-jarvis-cofounder
 - **Working branch for the current code line:** `development`
-- **Code baseline before the hub documentation commits:** `e445f0d` — Strip Markdown formatting from spoken responses. The `development` branch now has three documentation-only commits after that baseline: this hub and the README link. The local source/test changes described below are still not synced.
+- **Code baseline before the hub documentation commits:** `e445f0d` — Strip Markdown formatting from spoken responses. Documentation-only commits have advanced remote `development` beyond that baseline (hub, README link, and subsequent hub corrections). The local source/test changes described below are still not synced. The local source/test changes described below are still not synced.
 - **Local working copy:** `C:\Users\ZAYZA\JARVIS-Cofounder-Clean`
 - **Operating principle:** Discover first. Qualify second. Recommend third. Execute only after Zayn approves.
 
@@ -109,7 +109,7 @@ Other research/history known from the development process:
 
 Repository default branch is `main`; active development line is `development`. These are not interchangeable.
 
-Known branches at the time of this snapshot:
+Previously observed branch tips (historical snapshot; refresh before any merge or push):
 - `main` — `fc20bff`
 - `development` — `e445f0d`
 - `cofounder-verified` — `e127bda`
