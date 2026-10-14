@@ -56,7 +56,7 @@ function runIsolatedJarvis(business, input, state = {}, options = {}) {
           '  return { ok: true, status: 200, json: async () => ({ candidates: [{ content: { parts: [{ text: "GEMINI TEST RESPONSE" }] } }] }) };',
           '};',
           ''
-        ].join("\\n")
+        ].join('\n')
       );
     }
 
