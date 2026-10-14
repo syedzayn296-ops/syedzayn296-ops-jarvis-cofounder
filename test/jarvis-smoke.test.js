@@ -40,31 +40,36 @@ function runIsolatedJarvis(business, input, state = {}, options = {}) {
       );
     }
 
-    if (options.fakeAntigravity) {
+    if (options.fakeAIResponse || options.fakeAIHangs) {
       fs.writeFileSync(
-        path.join(tempDir, 'fake-agy.js'),
-        'console.log("ANTIGRAVITY TEST RESPONSE");\nprocess.exit(0);\n'
-      );
-    }
-    if (options.fakeAntigravityQuota) {
-      fs.writeFileSync(
-        path.join(tempDir, 'fake-agy.js'),
-        'console.error("RESOURCE_EXHAUSTED: Individual quota reached (429)");\nprocess.exit(3);\n'
-      );
-    }
-    if (options.fakeAntigravityHangs) {
-      fs.writeFileSync(
-        path.join(tempDir, 'fake-agy.js'),
-        'setInterval(() => {}, 1000);\n'
+        path.join(tempDir, 'fake-fetch.cjs'),
+        [
+          'global.fetch = async function(url, options = {}) {',
+          '  if (String(url).includes("/api/chat")) return { ok: true, status: 200, json: async () => ({ message: { content: "OLLAMA TEST RESPONSE" } }) };',
+          '  if (process.env.COFOUNDER_TEST_FETCH_HANG === "1") {',
+          '    return new Promise((resolve, reject) => {',
+          '      const signal = options.signal;',
+          '      if (signal && signal.aborted) return reject(signal.reason || new Error("aborted"));',
+          '      if (signal) signal.addEventListener("abort", () => reject(signal.reason || new Error("aborted")), { once: true });',
+          '    });',
+          '  }',
+          '  return { ok: true, status: 200, json: async () => ({ candidates: [{ content: { parts: [{ text: "GEMINI TEST RESPONSE" }] } }] }) };',
+          '};',
+          ''
+        ].join('\n')
       );
     }
 
     const env = {
       ...process.env,
-      ...(options.fakeResearch ? { PATH: `${tempDir};${process.env.PATH || ''}` } : {}),
-      ...((options.fakeAntigravity || options.fakeAntigravityQuota || options.fakeAntigravityHangs) ? { ANTIGRAVITY_BIN: path.join(tempDir, 'fake-agy.js') } : {})
+      GEMINI_API_KEY: options.fakeAIResponse || options.fakeAIHangs ? 'test-key' : '',
+      COFOUNDER_PROVIDER: options.provider || 'gemini',
+      COFOUNDER_TEST_FETCH_HANG: options.fakeAIHangs ? '1' : '0',
+      ...(options.fakeResearch ? { PATH: tempDir + ';' + (process.env.PATH || '') } : {}),
+      ...((options.fakeAIResponse || options.fakeAIHangs) ? {
+        NODE_OPTIONS: (process.env.NODE_OPTIONS ? process.env.NODE_OPTIONS + ' ' : '') + '--require=' + path.join(tempDir, 'fake-fetch.cjs').replace(/\\/g, '/')
+      } : {})
     };
-
 
     const result = spawnSync(process.execPath, ['index.js'], {
       cwd: tempDir,
@@ -974,17 +979,16 @@ test('dashboard views do not choose between duplicate open prospect names', () =
   }
 });
 
-test('AI provider uses Antigravity first when available', () => {
-  const business = prospectFixture();
+test('AI conversation uses the direct Gemini API response', () => {
   const { result } = runIsolatedJarvis(
-    business,
+    prospectFixture(),
     'What is our commercial focus?\n',
     {},
-    { fakeAntigravity: true }
+    { fakeAIResponse: true }
   );
 
   assert.equal(result.status, 0, 'stdout: ' + result.stdout + '\nstderr: ' + result.stderr);
-  assert.match(result.stdout ?? '', /ANTIGRAVITY TEST RESPONSE/);
+  assert.match(result.stdout ?? '', /GEMINI TEST RESPONSE/);
 });
 
 test('stop command is handled locally when no AI request is active', () => {
@@ -998,30 +1002,33 @@ test('stop command is handled locally when no AI request is active', () => {
   assert.doesNotMatch(result.stdout ?? '', /Thinking\.\.\./);
 });
 
-test('Antigravity quota exhaustion is reported without invoking fallback', () => {
-  const { result } = runIsolatedJarvis(
-    prospectFixture(),
-    'What should we do next?\n',
-    {},
-    { fakeAntigravityQuota: true }
-  );
-
-  assert.equal(result.status, 0, 'stdout: ' + result.stdout + '\nstderr: ' + result.stderr);
-  assert.match(result.stdout ?? '', /Antigravity quota is exhausted/);
-  assert.match(result.stdout ?? '', /OmniRoute fallback was skipped/);
-  assert.doesNotMatch(result.stdout ?? '', /All AI providers failed/);
+test('missing Gemini API key produces a clear error without fallback', () => {
+  const { result } = runIsolatedJarvis(prospectFixture(), 'What should we do next?\n');
+  assert.equal(result.status, 0);
+  assert.match(result.stdout ?? '', /GEMINI_API_KEY is not set/);
+  assert.doesNotMatch(result.stdout ?? '', /fallback provider|All AI providers failed/);
 });
 
-test('stop interrupts a running AI request without starting fallback', () => {
+test('Ollama can be selected explicitly as the local provider', () => {
+  const { result } = runIsolatedJarvis(
+    prospectFixture(),
+    'What is our commercial focus?\n',
+    {},
+    { fakeAIResponse: true, provider: 'ollama' }
+  );
+  assert.equal(result.status, 0, 'stdout: ' + result.stdout + '\nstderr: ' + result.stderr);
+  assert.match(result.stdout ?? '', /OLLAMA TEST RESPONSE/);
+});
+
+test('stop interrupts an active AI request without switching providers', () => {
   const { result } = runIsolatedJarvis(
     prospectFixture(),
     'What should we do next?\nstop\n',
     {},
-    { fakeAntigravityHangs: true }
+    { fakeAIHangs: true }
   );
-
   assert.equal(result.status, 0, 'stdout: ' + result.stdout + '\nstderr: ' + result.stderr);
   assert.match(result.stdout ?? '', /Stop requested/);
   assert.match(result.stdout ?? '', /Request cancelled by Zayn/);
-  assert.doesNotMatch(result.stdout ?? '', /All AI providers failed/);
+  assert.doesNotMatch(result.stdout ?? '', /fallback provider|All AI providers failed/);
 });
