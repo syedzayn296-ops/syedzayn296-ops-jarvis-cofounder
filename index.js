@@ -1887,7 +1887,9 @@ function showHeartbeat() {
 // --------------------------------------------------
 
 
-// GEMINI CONVERSATION VIA THE EXISTING OMNIROUTE INSTALLATION
+// AI CONVERSATION PROVIDERS (ANTIGRAVITY FIRST WITH OMNIROUTE FALLBACK)
+const path = require("path");
+const os = require("os");
 const conversationHistory = [];
 
 function getCofounderContext() {
@@ -1916,31 +1918,203 @@ function getCofounderContext() {
     ].join("\n").slice(0, 18000);
 }
 
-function askGemini(prompt) {
+function buildCofounderMessage(prompt) {
+    const history = conversationHistory.map(turn =>
+        "USER: " + turn.user + "\nCOFOUNDER: " + turn.assistant
+    ).join("\n\n");
+
+    return [
+        "You are Cofounder, Zayzana Tech's strategic AI partner in South Africa.",
+        "Use the company context and conversation history below.",
+        "Answer follow-up questions using earlier turns. Do not ask the user to repeat facts already supplied.",
+        "Distinguish verified facts from assumptions and unknowns. Never invent capabilities, prospects, revenue, pricing evidence, or completed actions.",
+        "Challenge weak assumptions respectfully. Give one practical recommendation and explain its trade-off.",
+        "Discover first. Qualify second. Recommend third. Execute only after Zayn approves.",
+        "",
+        getCofounderContext(),
+        "",
+        "RECENT CONVERSATION:",
+        history || "No previous turns in this session.",
+        "",
+        "LATEST MESSAGE FROM ZAYN:",
+        String(prompt)
+    ].join("\n");
+}
+
+function recordConversationTurn(prompt, response) {
+    conversationHistory.push({
+        user: String(prompt),
+        assistant: response
+    });
+
+    if (conversationHistory.length > 6) {
+        conversationHistory.splice(
+            0,
+            conversationHistory.length - 6
+        );
+    }
+}
+
+function getAntigravityBin() {
+    if (process.env.ANTIGRAVITY_BIN) {
+        return process.env.ANTIGRAVITY_BIN;
+    }
+    const localAppData = process.env.LOCALAPPDATA || (process.env.USERPROFILE ? path.join(process.env.USERPROFILE, "AppData", "Local") : "");
+    return localAppData ? path.join(localAppData, "agy", "bin", "agy.exe") : "";
+}
+
+// Track the active AI subprocess so local stop commands can interrupt it.
+let activeAiChild = null;
+let activeAiProvider = null;
+let activeAiRequest = false;
+let activeRequestCancelled = false;
+
+function isQuotaExhaustion(error) {
+    const message = String(error && error.message ? error.message : error || "");
+    return /individual quota reached|resource_exhausted|quota.{0,30}(exhausted|reached)|(?:http|error|code)?\s*429\b/i.test(message);
+}
+
+function cancelActiveAiRequest() {
+    if (!activeAiRequest) {
+        console.log("COFOUNDER > No AI request is currently running.");
+        return true;
+    }
+
+    activeRequestCancelled = true;
+    if (activeAiChild && !activeAiChild.killed) {
+        try {
+            activeAiChild.kill();
+        } catch (_) {}
+    }
+    console.log("COFOUNDER > Stop requested. The current AI request is being cancelled; no fallback provider will be called.");
+    return true;
+}
+
+function callAntigravity(message) {
     return new Promise((resolve, reject) => {
-        const history = conversationHistory.map(turn =>
-            "USER: " + turn.user + "\nCOFOUNDER: " + turn.assistant
-        ).join("\n\n");
+        const maxPromptLength = Number(process.env.ANTIGRAVITY_MAX_PROMPT_LENGTH) || 30000;
+        if (typeof message !== "string" || message.length > maxPromptLength) {
+            reject(new Error("Prompt is oversized for Antigravity CLI (" + (message ? message.length : 0) + " > " + maxPromptLength + ")"));
+            return;
+        }
 
-        const message = [
-            "You are Cofounder, Zayzana Tech's strategic AI partner in South Africa.",
-            "Use the company context and conversation history below.",
-            "Answer follow-up questions using earlier turns. Do not ask the user to repeat facts already supplied.",
-            "Distinguish verified facts from assumptions and unknowns. Never invent capabilities, prospects, revenue, pricing evidence, or completed actions.",
-            "Challenge weak assumptions respectfully. Give one practical recommendation and explain its trade-off.",
-            "Discover first. Qualify second. Recommend third. Execute only after Zayn approves.",
-            "",
-            getCofounderContext(),
-            "",
-            "RECENT CONVERSATION:",
-            history || "No previous turns in this session.",
-            "",
-            "LATEST MESSAGE FROM ZAYN:",
-            String(prompt)
-        ].join("\n");
+        const bin = getAntigravityBin();
+        if (!bin || (path.isAbsolute(bin) && !fs.existsSync(bin))) {
+            reject(new Error("Antigravity executable not found: " + (bin || "unknown path")));
+            return;
+        }
 
-        const path = require("path");
-        const os = require("os");
+        const timeoutMs = Number(process.env.ANTIGRAVITY_TIMEOUT_MS) || 45000;
+        const args = [
+            "--sandbox",
+            "--output-format",
+            "text",
+            "--print=" + message
+        ];
+
+        let child;
+        try {
+            if (bin.endsWith(".js")) {
+                child = spawn(process.execPath, [bin, ...args], {
+                    windowsHide: true,
+                    stdio: ["ignore", "pipe", "pipe"]
+                });
+            } else if (process.platform === "win32" && (bin.endsWith(".cmd") || bin.endsWith(".bat"))) {
+                child = spawn(bin, args, {
+                    windowsHide: true,
+                    shell: true,
+                    stdio: ["ignore", "pipe", "pipe"]
+                });
+            } else {
+                child = spawn(bin, args, {
+                    windowsHide: true,
+                    stdio: ["ignore", "pipe", "pipe"]
+                });
+            }
+        } catch (err) {
+            reject(err);
+            return;
+        }
+
+        activeAiChild = child;
+        activeAiProvider = "Antigravity";
+
+        let stdout = "";
+        let stderr = "";
+        let settled = false;
+
+        const timer = setTimeout(() => {
+            if (settled) return;
+            settled = true;
+            try {
+                child.kill();
+            } catch (_) {}
+            reject(new Error("Antigravity request timed out after " + timeoutMs + "ms"));
+        }, timeoutMs);
+
+        child.stdout.on("data", data => {
+            stdout += data.toString();
+        });
+        child.stderr.on("data", data => {
+            stderr += data.toString();
+        });
+
+        child.on("error", error => {
+            clearTimeout(timer);
+            if (activeAiChild === child) {
+                activeAiChild = null;
+                activeAiProvider = null;
+            }
+            if (settled) return;
+            settled = true;
+            try {
+                child.kill();
+            } catch (_) {}
+            reject(error);
+        });
+
+        child.on("close", code => {
+            clearTimeout(timer);
+            if (activeAiChild === child) {
+                activeAiChild = null;
+                activeAiProvider = null;
+            }
+            if (settled) return;
+            settled = true;
+
+            if (code !== 0) {
+                reject(new Error(
+                    "Antigravity exited with code " + code + ".\n" +
+                    "STDERR: " + stderr.trim() + "\n" +
+                    "STDOUT: " + stdout.trim()
+                ));
+                return;
+            }
+
+            const response = stdout.trim();
+            if (!response) {
+                reject(new Error(
+                    "Antigravity returned empty output.\n" +
+                    "STDERR: " + stderr.trim()
+                ));
+                return;
+            }
+
+            resolve(response);
+        });
+    });
+}
+
+function getOmniRouteScript() {
+    if (process.env.OMNIROUTE_SCRIPT) {
+        return process.env.OMNIROUTE_SCRIPT;
+    }
+    const appData = process.env.APPDATA || (process.env.USERPROFILE ? path.join(process.env.USERPROFILE, "AppData", "Roaming") : "");
+    return appData ? path.join(appData, "npm", "node_modules", "omniroute", "bin", "omniroute.mjs") : "";
+}
+
+function callOmniRoute(message) {
+    return new Promise((resolve, reject) => {
         const promptFile = path.join(
             os.tmpdir(),
             "cofounder-prompt-" + process.pid + "-" + Date.now() + ".txt"
@@ -1953,48 +2127,97 @@ function askGemini(prompt) {
             return;
         }
 
-        const omniRouteScript = require("path").join(
-            process.env.APPDATA,
-            "npm",
-            "node_modules",
-            "omniroute",
-            "bin",
-            "omniroute.mjs"
-        );
-
-        const child = spawn(process.execPath, [
-            omniRouteScript,
-            "chat",
-            "--file",
-            promptFile,
-            "--no-history"
-        ], {
-            windowsHide: true,
-            stdio: ["ignore", "pipe", "pipe"]
-        });
-
-        let stdout = "";
-        let stderr = "";
-        let settled = false;
-
         const cleanup = () => {
             try {
                 fs.unlinkSync(promptFile);
             } catch (_) {}
         };
 
+        const timeoutMs = Number(process.env.OMNIROUTE_TIMEOUT_MS) || 45000;
+        let child;
+
+        try {
+            if (process.env.OMNIROUTE_BIN) {
+                const bin = process.env.OMNIROUTE_BIN;
+                const args = ["chat", "--file", promptFile, "--no-history"];
+                if (bin.endsWith(".js")) {
+                    child = spawn(process.execPath, [bin, ...args], {
+                        windowsHide: true,
+                        stdio: ["ignore", "pipe", "pipe"]
+                    });
+                } else if (process.platform === "win32" && (bin.endsWith(".cmd") || bin.endsWith(".bat"))) {
+                    child = spawn(bin, args, {
+                        windowsHide: true,
+                        shell: true,
+                        stdio: ["ignore", "pipe", "pipe"]
+                    });
+                } else {
+                    child = spawn(bin, args, {
+                        windowsHide: true,
+                        stdio: ["ignore", "pipe", "pipe"]
+                    });
+                }
+            } else {
+                const omniRouteScript = getOmniRouteScript();
+                child = spawn(process.execPath, [
+                    omniRouteScript,
+                    "chat",
+                    "--file",
+                    promptFile,
+                    "--no-history"
+                ], {
+                    windowsHide: true,
+                    stdio: ["ignore", "pipe", "pipe"]
+                });
+            }
+        } catch (err) {
+            cleanup();
+            reject(err);
+            return;
+        }
+
+        activeAiChild = child;
+        activeAiProvider = "OmniRoute";
+
+        let stdout = "";
+        let stderr = "";
+        let settled = false;
+
+        const timer = setTimeout(() => {
+            if (settled) return;
+            settled = true;
+            cleanup();
+            try {
+                child.kill();
+            } catch (_) {}
+            reject(new Error("OmniRoute request timed out after " + timeoutMs + "ms"));
+        }, timeoutMs);
+
         child.stdout.on("data", data => stdout += data.toString());
         child.stderr.on("data", data => stderr += data.toString());
 
         child.on("error", error => {
+            clearTimeout(timer);
+            if (activeAiChild === child) {
+                activeAiChild = null;
+                activeAiProvider = null;
+            }
             if (settled) return;
             settled = true;
             cleanup();
+            try {
+                child.kill();
+            } catch (_) {}
             reject(error);
         });
 
         child.on("close", code => {
+            clearTimeout(timer);
             cleanup();
+            if (activeAiChild === child) {
+                activeAiChild = null;
+                activeAiProvider = null;
+            }
 
             if (settled) return;
             settled = true;
@@ -2003,7 +2226,7 @@ function askGemini(prompt) {
                 .replace(/^.*Loaded env from .*$/gm, "")
                 .trim();
 
-            if (!response) {
+            if (!response || code !== 0) {
                 reject(new Error(
                     "OmniRoute returned no answer (exit code " + code + ").\n" +
                     "STDERR: " + stderr.trim() + "\n" +
@@ -2012,21 +2235,58 @@ function askGemini(prompt) {
                 return;
             }
 
-            conversationHistory.push({
-                user: String(prompt),
-                assistant: response
-            });
-
-            if (conversationHistory.length > 6) {
-                conversationHistory.splice(
-                    0,
-                    conversationHistory.length - 6
-                );
-            }
-
             resolve(response);
         });
     });
+}
+
+function askGemini(prompt) {
+    const message = buildCofounderMessage(prompt);
+    activeRequestCancelled = false;
+    activeAiRequest = true;
+
+    return callAntigravity(message)
+        .then(response => {
+            if (activeRequestCancelled) {
+                throw new Error("Request cancelled by Zayn.");
+            }
+            recordConversationTurn(prompt, response);
+            return response;
+        })
+        .catch(agyError => {
+            if (activeRequestCancelled) {
+                throw new Error("Request cancelled by Zayn. No fallback provider was called.");
+            }
+            if (isQuotaExhaustion(agyError)) {
+                throw new Error(
+                    "Antigravity quota is exhausted. It will not be retried and OmniRoute fallback was skipped. " +
+                    "Use a different available provider or wait for the quota reset."
+                );
+            }
+            return callOmniRoute(message)
+                .then(response => {
+                    if (activeRequestCancelled) {
+                        throw new Error("Request cancelled by Zayn.");
+                    }
+                    recordConversationTurn(prompt, response);
+                    return response;
+                })
+                .catch(omniError => {
+                    if (activeRequestCancelled) {
+                        throw new Error("Request cancelled by Zayn. No fallback provider was called.");
+                    }
+                    throw new Error(
+                        "All AI providers failed.\n" +
+                        "Antigravity: " + agyError.message + "\n" +
+                        "OmniRoute: " + omniError.message
+                    );
+                });
+        })
+        .finally(() => {
+            activeAiRequest = false;
+            activeAiChild = null;
+            activeAiProvider = null;
+        });
 }
 
 function handleCommand(input) {
@@ -2034,6 +2294,9 @@ function handleCommand(input) {
     if (!trimmed) return true;
 
     const lower = trimmed.toLowerCase();
+    if (lower === "stop" || lower === "cancel" || lower === "abort") {
+        return cancelActiveAiRequest();
+    }
     if (lower === "standby" || lower === "stand by" || lower === "hold") {
         console.log("COFOUNDER > Understood. Standing by. No action will be taken without a new instruction.");
         return true;
@@ -4010,32 +4273,59 @@ const rl = readline.createInterface({
 
 rl.prompt();
 
-rl.on("line", async (line) => {
-    rl.pause();
-    const originalLog = console.log;
-    const responseLines = [];
-
-    // Keep normal on-screen output while collecting one complete response for speech.
-    console.log = (...args) => {
-        originalLog(...args);
-        responseLines.push(args.map(value =>
+let commandBusy = false;
+const queuedCommands = [];
+let activeResponseLines = null;
+const originalConsoleLog = console.log;
+console.log = (...args) => {
+    originalConsoleLog(...args);
+    if (activeResponseLines) {
+        activeResponseLines.push(args.map(value =>
             typeof value === "string" ? value : String(value)
         ).join(" "));
-    };
+    }
+};
 
+async function processCommandLine(line) {
+    commandBusy = true;
+    const responseLines = [];
+    activeResponseLines = responseLines;
     try {
         await handleCommand(line);
     } catch (error) {
         console.log("\nCOFOUNDER > Command failed: " + error.message);
     } finally {
-        console.log = originalLog;
+        activeResponseLines = null;
         const spokenResponse = responseLines
             .filter(text => !/COFOUNDER > Thinking\.\.\./i.test(text))
             .join(". ");
         if (spokenResponse.trim()) await speakText(spokenResponse);
-        rl.resume();
-        rl.prompt();
+        commandBusy = false;
+        if (!rl.closed) rl.prompt();
+
+        if (queuedCommands.length > 0) {
+            const nextLine = queuedCommands.shift();
+            setImmediate(() => processCommandLine(nextLine));
+        }
     }
+}
+
+rl.on("line", (line) => {
+    const normalized = String(line || "").trim().toLowerCase();
+    const isStopCommand = normalized === "stop" || normalized === "cancel" || normalized === "abort";
+
+    // A stop command bypasses the queue only while an AI provider is running.
+    if (isStopCommand && activeAiRequest) {
+        handleCommand(line);
+        return;
+    }
+
+    if (commandBusy) {
+        queuedCommands.push(line);
+        return;
+    }
+
+    processCommandLine(line);
 }).on("close", () => {
     console.log("\nCOFOUNDER > Session ended.");
 });

@@ -29,6 +29,10 @@ function runIsolatedJarvis(business, input, state = {}, options = {}) {
       }, null, 2)
     );
 
+    fs.writeFileSync(
+      path.join(tempDir, 'cofounder-settings.json'),
+      JSON.stringify({ speechEnabled: false })
+    );
     if (options.fakeResearch) {
       fs.writeFileSync(
         path.join(tempDir, 'mcporter.cmd'),
@@ -36,9 +40,31 @@ function runIsolatedJarvis(business, input, state = {}, options = {}) {
       );
     }
 
-    const env = options.fakeResearch
-      ? { ...process.env, PATH: `${tempDir};${process.env.PATH || ''}` }
-      : process.env;
+    if (options.fakeAntigravity) {
+      fs.writeFileSync(
+        path.join(tempDir, 'fake-agy.js'),
+        'console.log("ANTIGRAVITY TEST RESPONSE");\nprocess.exit(0);\n'
+      );
+    }
+    if (options.fakeAntigravityQuota) {
+      fs.writeFileSync(
+        path.join(tempDir, 'fake-agy.js'),
+        'console.error("RESOURCE_EXHAUSTED: Individual quota reached (429)");\nprocess.exit(3);\n'
+      );
+    }
+    if (options.fakeAntigravityHangs) {
+      fs.writeFileSync(
+        path.join(tempDir, 'fake-agy.js'),
+        'setInterval(() => {}, 1000);\n'
+      );
+    }
+
+    const env = {
+      ...process.env,
+      ...(options.fakeResearch ? { PATH: `${tempDir};${process.env.PATH || ''}` } : {}),
+      ...((options.fakeAntigravity || options.fakeAntigravityQuota || options.fakeAntigravityHangs) ? { ANTIGRAVITY_BIN: path.join(tempDir, 'fake-agy.js') } : {})
+    };
+
 
     const result = spawnSync(process.execPath, ['index.js'], {
       cwd: tempDir,
@@ -946,4 +972,56 @@ test('dashboard views do not choose between duplicate open prospect names', () =
     assert.match(result.stdout ?? '', /select prospect <exact name>/i, command);
     assert.doesNotMatch(result.stdout ?? '', /Work the selected prospect: Test prospect|CURRENT FOCUS: Selected prospect \\| Test prospect/, command);
   }
+});
+
+test('AI provider uses Antigravity first when available', () => {
+  const business = prospectFixture();
+  const { result } = runIsolatedJarvis(
+    business,
+    'What is our commercial focus?\n',
+    {},
+    { fakeAntigravity: true }
+  );
+
+  assert.equal(result.status, 0, 'stdout: ' + result.stdout + '\nstderr: ' + result.stderr);
+  assert.match(result.stdout ?? '', /ANTIGRAVITY TEST RESPONSE/);
+});
+
+test('stop command is handled locally when no AI request is active', () => {
+  const { result } = runIsolatedJarvis(
+    prospectFixture(),
+    'stop\n'
+  );
+
+  assert.equal(result.status, 0);
+  assert.match(result.stdout ?? '', /No AI request is currently running/);
+  assert.doesNotMatch(result.stdout ?? '', /Thinking\.\.\./);
+});
+
+test('Antigravity quota exhaustion is reported without invoking fallback', () => {
+  const { result } = runIsolatedJarvis(
+    prospectFixture(),
+    'What should we do next?\n',
+    {},
+    { fakeAntigravityQuota: true }
+  );
+
+  assert.equal(result.status, 0, 'stdout: ' + result.stdout + '\nstderr: ' + result.stderr);
+  assert.match(result.stdout ?? '', /Antigravity quota is exhausted/);
+  assert.match(result.stdout ?? '', /OmniRoute fallback was skipped/);
+  assert.doesNotMatch(result.stdout ?? '', /All AI providers failed/);
+});
+
+test('stop interrupts a running AI request without starting fallback', () => {
+  const { result } = runIsolatedJarvis(
+    prospectFixture(),
+    'What should we do next?\nstop\n',
+    {},
+    { fakeAntigravityHangs: true }
+  );
+
+  assert.equal(result.status, 0, 'stdout: ' + result.stdout + '\nstderr: ' + result.stderr);
+  assert.match(result.stdout ?? '', /Stop requested/);
+  assert.match(result.stdout ?? '', /Request cancelled by Zayn/);
+  assert.doesNotMatch(result.stdout ?? '', /All AI providers failed/);
 });
