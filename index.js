@@ -2228,7 +2228,7 @@ function getCofounderContext() {
             (pick(item, ["text", "content", "memory"]) || "Memory details not recorded.")));
     }
 
-    return [
+    const completeContext = [
         "VERIFIED COMPANY CONTEXT:",
         "- Company: Zayzana Tech, South Africa.",
         "- Tagline: We find. We build. We solve.",
@@ -2239,7 +2239,11 @@ function getCofounderContext() {
         "- Keep verified facts separate from hypotheses. Ask for clarification if local records conflict or are incomplete.",
         "",
         lines.join("\n")
-    ].join("\n").slice(0, 14000);
+    ].join("\n");
+    const maxContextChars = 14000;
+    if (completeContext.length <= maxContextChars) return completeContext;
+    const truncationNotice = "\n\n[CONTEXT TRUNCATED: additional summarized records were omitted to fit the prompt. Ask for a focused summary of the relevant record category.]";
+    return completeContext.slice(0, maxContextChars - truncationNotice.length) + truncationNotice;
 }
 
 function buildCofounderMessage(prompt) {
