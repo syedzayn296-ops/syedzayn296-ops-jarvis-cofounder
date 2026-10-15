@@ -4606,6 +4606,8 @@ rl.prompt();
 let commandBusy = false;
 let shuttingDown = false;
 const queuedCommands = [];
+let collectingMultiline = false;
+const multilineBuffer = [];
 let activeResponseLines = null;
 const originalConsoleLog = console.log;
 console.log = (...args) => {
@@ -4667,6 +4669,46 @@ rl.on("SIGINT", () => {
 
 rl.on("line", (line) => {
     const normalized = String(line || "").trim().toLowerCase();
+
+    // Explicit multiline mode keeps pasted prompts together instead of treating
+    // every pasted newline as a separate command.
+    if (collectingMultiline) {
+        if (normalized === "end" || normalized === "submit") {
+            collectingMultiline = false;
+            const promptText = multilineBuffer.join("\n").trim();
+            multilineBuffer.length = 0;
+            rl.setPrompt("JARVIS > ");
+            if (!promptText) {
+                console.log("COFOUNDER > Empty multiline prompt discarded.");
+                if (!rl.closed) rl.prompt();
+                return;
+            }
+            if (commandBusy) queuedCommands.push(promptText);
+            else processCommandLine(promptText);
+            return;
+        }
+        if (normalized === "cancel") {
+            collectingMultiline = false;
+            multilineBuffer.length = 0;
+            rl.setPrompt("JARVIS > ");
+            console.log("COFOUNDER > Multiline prompt discarded.");
+            if (!rl.closed) rl.prompt();
+            return;
+        }
+        multilineBuffer.push(line);
+        rl.prompt();
+        return;
+    }
+
+    if (normalized === "paste" || normalized === "multiline") {
+        collectingMultiline = true;
+        multilineBuffer.length = 0;
+        rl.setPrompt("PASTE (enter END on its own line to submit) > ");
+        console.log("COFOUNDER > Multiline mode. Paste or type the complete prompt; enter END on its own line to submit, or CANCEL to discard.");
+        rl.prompt();
+        return;
+    }
+
     const isStopCommand = normalized === "stop" || normalized === "cancel" || normalized === "abort";
 
     // A stop command bypasses the queue only while an AI provider is running.
