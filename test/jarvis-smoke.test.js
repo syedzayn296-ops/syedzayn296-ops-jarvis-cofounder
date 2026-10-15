@@ -1000,6 +1000,35 @@ test('AI conversation uses the direct Gemini API response', () => {
   assert.equal(result.status, 0, 'stdout: ' + result.stdout + '\nstderr: ' + result.stderr);
   assert.match(result.stdout ?? '', /GEMINI TEST RESPONSE/);
 });
+test('unknown tell-me-about topic reaches AI instead of project error', () => {
+  const { result } = runIsolatedJarvis(
+    prospectFixture(),
+    'Tell me about the weather today\n',
+    {},
+    { fakeAIResponse: true }
+  );
+
+  assert.equal(result.status, 0, 'stdout: ' + result.stdout + '\nstderr: ' + result.stderr);
+  assert.match(result.stdout ?? '', /GEMINI TEST RESPONSE/);
+  assert.doesNotMatch(result.stdout ?? '', /I don't recognise that project/);
+});
+
+test('Fishing Logbook question still opens its project details', () => {
+  const { result } = runIsolatedJarvis(
+    {
+      prospects: [],
+      opportunities: [],
+      offers: [],
+      followUps: [],
+      revenue: []
+    },
+    'Tell me about Fishing Logbook\n'
+  );
+
+  assert.equal(result.status, 0, 'stdout: ' + result.stdout + '\nstderr: ' + result.stderr);
+  assert.match(result.stdout ?? '', /Fishing Logbook/);
+  assert.doesNotMatch(result.stdout ?? '', /ZAYZANA TECH .* PROJECT PORTFOLIO/);
+});
 
 test('stop command is handled locally when no AI request is active', () => {
   const { result } = runIsolatedJarvis(
