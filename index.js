@@ -2271,6 +2271,11 @@ function buildCofounderMessage(prompt) {
         "Only bring up sales goals or pipeline follow-ups when relevant to the user's request or when the user asks for business priorities.",
         "Answer follow-up questions using earlier turns. Do not ask the user to repeat facts already supplied.",
         "Distinguish verified facts from assumptions and unknowns. Never invent capabilities, prospects, revenue, pricing evidence, or completed actions.",
+        "COMMERCIAL DELIVERABLE GATE: When asked to create a proposal, offer, quote, pilot plan, commercial brief or sales message, do not treat a project description or a previous AI answer as proof that a feature exists.",
+        "For every proposed deliverable, distinguish: VERIFIED EXISTING CAPABILITY, PROPOSED BUILD/CONFIGURATION, and REQUIRES BUYER OR TECHNICAL VALIDATION. If local project records do not verify a capability, never promise it as included or already available; make it conditional or exclude it from the fixed scope.",
+        "Never invent buyer agreement, budget, curriculum fit, technical integrations, hosting/security arrangements, dashboards, analytics, reports, setup effort or customer outcomes. Positive feedback is not a purchase commitment.",
+        "Show proposed prices as unapproved estimates. Calculate direct cash costs and founder labour separately using an explicit assumed hourly rate; show contribution after labour as well as any cash-only margin, and label all estimates. Do not call cash-only margin the true gross margin.",
+        "Before presenting a commercial deliverable, perform a separate critical review and revise it: remove unsupported claims, make unverified features conditional, check arithmetic and scope/cost alignment, identify missing buyer confirmations, and give the corrected deliverable only. If evidence is insufficient, say so instead of filling gaps with plausible inventions.",
         "Challenge weak assumptions respectfully. Give one practical recommendation and explain its trade-off.",
         "For commercial or strategic decisions, run an internal advisory board before answering: Commercial Strategist assesses cash flow, time-to-revenue, pricing and the route to a buyer; Customer/Market Analyst checks the buyer problem, demand evidence, alternatives and access to decision-makers; Sceptic/Risk Adviser challenges assumptions, hidden costs, delivery risk and reasons to kill the idea; Chair reconciles disagreements and chooses the best next move.",
         "For competing opportunities, compare likelihood of payment, time to first cash, cost to test, repeatability, owned-asset value and strategic fit. State the evidence and uncertainty behind the comparison; do not invent scores or claim research that was not actually performed.",
@@ -2358,6 +2363,38 @@ async function requestOllama(message, signal) {
     return answer;
 }
 
+function needsCommercialDeliverableAudit(prompt) {
+    const text = String(prompt || "");
+    const asksForArtifact = /\b(?:produce|write|draft|create|prepare|generate|deliver|make)\b/i.test(text);
+    const namesCommercialArtifact = /\b(?:commercial decision brief|commercial brief|proposal|offer|quote|pilot plan|business case|pricing plan|prospect message|sales message)\b/i.test(text);
+    return asksForArtifact && namesCommercialArtifact;
+}
+
+function buildCommercialDeliverableAuditMessage(originalPrompt, draft) {
+    return [
+        "You are Cofounder's independent commercial evidence and delivery reviewer.",
+        "Review the draft against the user request and the company/local-record context below. The first model pass is not evidence.",
+        "Return the corrected final deliverable only; do not describe your review process.",
+        "MANDATORY CHECKS:",
+        "1. Remove or qualify every feature, integration, hosting/security claim, dashboard, report, performance outcome or implementation promise not explicitly verified by the supplied context.",
+        "2. Label each deliverable as verified existing capability, proposed build/configuration, or requiring buyer/technical validation. Do not imply proposed work already exists.",
+        "3. Separate verified facts, assumptions and unknowns. Do not invent buyer budget, authority, commitment, requirements, curriculum alignment or research.",
+        "4. Mark all proposed prices as unapproved estimates unless approval is explicitly recorded.",
+        "5. Recalculate costs transparently. Include founder labour using an explicit assumed hourly rate, show cash costs separately, and distinguish cash-only margin from contribution after labour.",
+        "6. Ensure the proposed scope, timeline, deliverables, price and cost estimates are internally consistent. If they cannot be validated, narrow the offer to a discovery/validation step rather than promise delivery.",
+        "7. Keep external actions unexecuted; provide drafts only. Finish with one recommendation and one next action.",
+        "",
+        "CONVERSATION AND COMPANY CONTEXT (including relevant prior turns):",
+        buildCofounderMessage(originalPrompt),
+        "",
+        "ORIGINAL USER REQUEST:",
+        String(originalPrompt),
+        "",
+        "DRAFT TO AUDIT AND CORRECT:",
+        String(draft)
+    ].join("\n");
+}
+
 async function askCofounderAI(prompt) {
     const message = buildCofounderMessage(prompt);
     const provider = String(process.env.COFOUNDER_PROVIDER || "gemini").trim().toLowerCase();
@@ -2375,10 +2412,20 @@ async function askCofounderAI(prompt) {
         }
     }, timeoutMs);
     try {
-        const response = provider === "ollama"
+        let response = provider === "ollama"
             ? await requestOllama(message, controller.signal)
             : await requestGemini(message, controller.signal);
         if (activeRequestCancelled) throw new Error("Request cancelled by Zayn.");
+
+        if (needsCommercialDeliverableAudit(prompt)) {
+            console.log("COFOUNDER > Running commercial evidence and delivery audit...");
+            const auditMessage = buildCommercialDeliverableAuditMessage(prompt, response);
+            response = provider === "ollama"
+                ? await requestOllama(auditMessage, controller.signal)
+                : await requestGemini(auditMessage, controller.signal);
+            if (activeRequestCancelled) throw new Error("Request cancelled by Zayn.");
+        }
+
         recordConversationTurn(prompt, response);
         return response;
     } catch (error) {
