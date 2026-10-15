@@ -1074,3 +1074,37 @@ test('single-project question still shows only the requested project', () => {
   assert.doesNotMatch(result.stdout ?? '', /ZAYZANA TECH — PROJECT PORTFOLIO/);
   assert.doesNotMatch(result.stdout ?? '', /Fishing Logbook/);
 });
+
+
+test('read-only business audit reports local file health and missing memory without changing records', () => {
+  const business = {
+    prospects: [],
+    opportunities: [],
+    offers: [],
+    followUps: [],
+    revenue: []
+  };
+  const state = {
+    goals: [],
+    decisions: [],
+    approvals: [],
+    executions: [],
+    lessons: [],
+    research: []
+  };
+  const { result, business: afterBusiness, state: afterState } = runIsolatedJarvis(
+    business,
+    'audit\\n',
+    state
+  );
+
+  assert.equal(result.status, 0);
+  assert.match(result.stdout ?? '', /COFOUNDER — READ-ONLY BUSINESS DATA AUDIT/);
+  assert.match(result.stdout ?? '', /business\.json[\s\S]*Status: OK — JSON parsed/);
+  assert.match(result.stdout ?? '', /cofounder-state\.json[\s\S]*Status: OK — JSON parsed/);
+  assert.match(result.stdout ?? '', /memory\.json[\s\S]*Status: MISSING/);
+  assert.match(result.stdout ?? '', /No file was created/);
+  assert.match(result.stdout ?? '', /No files were modified by the audit/);
+  assert.deepEqual(afterBusiness, business);
+  assert.deepEqual(afterState, state);
+});
