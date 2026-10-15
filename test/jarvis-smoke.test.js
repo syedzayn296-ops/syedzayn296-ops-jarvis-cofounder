@@ -1287,6 +1287,6 @@ test('multiline paste mode sends a complete prompt as one AI request', () => {
   assert.ok(capturedAIRequest, 'expected the AI request to be captured');
   const payload = JSON.parse(capturedAIRequest);
   const prompt = payload.contents[0].parts[0].text;
-  assert.match(prompt, /LATEST MESSAGE FROM ZAYN:\nProduce the complete offer\\.\nInclude prices, costs, and the message draft\\.\nDo not ask me to repeat the instruction\\./);
-  assert.doesNotMatch(prompt, /LATEST MESSAGE FROM ZAYN:\nProduce the complete offer\\.\nCOFOUNDER:/);
+  assert.match(prompt, /LATEST MESSAGE FROM ZAYN:\nProduce the complete offer\.\nInclude prices, costs, and the message draft\.\nDo not ask me to repeat the instruction\./);
+  assert.doesNotMatch(prompt, /LATEST MESSAGE FROM ZAYN:\nProduce the complete offer\.\nCOFOUNDER:/);
 });
