@@ -304,7 +304,8 @@ function webResearch(query) {
 // MEMORY
 // --------------------------------------------------
 
-let memory = loadJson(memoryFile, []);
+// Keep an absent memory file absent during startup; create it only when memory is explicitly saved.
+let memory = fs.existsSync(memoryFile) ? loadJson(memoryFile, []) : [];
 
 function remember(text) {
     if (!text) return;
