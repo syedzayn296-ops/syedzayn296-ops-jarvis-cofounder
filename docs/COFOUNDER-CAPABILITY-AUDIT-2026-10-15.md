@@ -89,3 +89,13 @@ The three context files read by the AI are absent from the public repository, as
 Cofounder already has a useful foundation: a live AI provider, local business-context loading, structured commercial workflows, approval safeguards, regression tests, and working speech output with an immediately responsive manual interrupt test. The bottleneck is not another AI provider or more architecture. It is making the local business state complete and legible, and then turning it into reliable, explainable next actions.
 
 **Next implementation task: P1 portfolio command + regression tests.**
+
+
+## Implementation follow-up — 2026-10-15
+
+The first finding has now been addressed on `development`:
+- Added a portfolio route before the single-project lookup, including natural-language questions that mention projects, products, or portfolio.
+- Portfolio output lists all six currently hard-coded project records, statuses, and recorded links; projects without links are labelled as not published / not recorded.
+- Added two regression tests: one for the user's exact multi-project question and one confirming single-project lookup still behaves as before.
+- Code commit: `f23d827`; regex correction: `f0091dd`; tests commit: `98ad5fd`.
+- GitHub Actions run #30 was still in progress at the time of this update. Do not call the change CI-verified until that run completes successfully.
