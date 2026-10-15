@@ -4119,16 +4119,15 @@ if (input === "commercial brain" || input === "commercial") { commercialBrain.an
     }
 
     // PROJECT INFO
+    // Only handle this command when the topic matches a known project.
+    // Otherwise, allow the normal AI conversation handler to answer it.
     if (lower.startsWith("tell me about ")) {
         const projectKey = detectProject(trimmed);
 
         if (projectKey) {
             showProject(projectKey);
-        } else {
-            console.log("JARVIS > I don't recognise that project.");
+            return true;
         }
-
-        return true;
     }
 
     // WEBSITE COMMANDS
