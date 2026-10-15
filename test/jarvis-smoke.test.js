@@ -1266,3 +1266,27 @@ test('AI context summarizes prioritized records and labels missing sources inste
   assert.match(capturedAIRequest ?? '', /memory.json: READABLE/);
   assert.doesNotMatch(capturedAIRequest ?? '', /No local context files could be read/);
 });
+
+
+test('multiline paste mode sends a complete prompt as one AI request', () => {
+  const { result, capturedAIRequest } = runIsolatedJarvis(
+    {
+      prospects: [],
+      opportunities: [],
+      offers: [],
+      followUps: [],
+      revenue: []
+    },
+    'paste\nProduce the complete offer.\nInclude prices, costs, and the message draft.\nDo not ask me to repeat the instruction.\nEND\n',
+    {},
+    { fakeAIResponse: true, captureAIRequest: true }
+  );
+
+  assert.equal(result.status, 0, 'stdout: ' + result.stdout + '\nstderr: ' + result.stderr);
+  assert.match(result.stdout ?? '', /GEMINI TEST RESPONSE/);
+  assert.ok(capturedAIRequest, 'expected the AI request to be captured');
+  const payload = JSON.parse(capturedAIRequest);
+  const prompt = payload.contents[0].parts[0].text;
+  assert.match(prompt, /LATEST MESSAGE FROM ZAYN:\nProduce the complete offer\.\nInclude prices, costs, and the message draft\.\nDo not ask me to repeat the instruction\./);
+  assert.doesNotMatch(prompt, /LATEST MESSAGE FROM ZAYN:\nProduce the complete offer\.\nCOFOUNDER:/);
+});
