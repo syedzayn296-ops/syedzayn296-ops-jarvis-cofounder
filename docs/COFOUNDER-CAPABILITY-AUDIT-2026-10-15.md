@@ -99,3 +99,12 @@ The first finding has now been addressed on `development`:
 - Added two regression tests: one for the user's exact multi-project question and one confirming single-project lookup still behaves as before.
 - Code commit: `f23d827`; regex correction: `f0091dd`; tests commit: `98ad5fd`.
 - GitHub Actions run #30 was still in progress at the time of this update. Do not call the change CI-verified until that run completes successfully.
+
+
+## Implementation follow-up 2 — read-only data audit
+
+A read-only `audit` command is now implemented in `index.js` (commit `c3c4767`) with a regression test (commit `d99f2e6`).
+
+Run `audit` inside Cofounder. It checks `business.json`, `cofounder-state.json`, and `memory.json` for file presence, parse validity, modification time and size; reports counts for known record arrays; and flags selected missing required fields. It does not print record contents, create a missing file, or write to the business files. It explicitly warns that file health does not prove freshness or commercial truth.
+
+The test suite now has 54 test cases. GitHub Actions run #34 was still in progress at the time of this note; confirm its final result before calling the newest change CI-verified. The audit has not yet been run against Zayn's private local data, so no conclusion about his actual files is available yet.
