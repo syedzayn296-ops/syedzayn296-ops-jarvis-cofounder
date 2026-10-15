@@ -2063,15 +2063,171 @@ function runReadOnlyBusinessAudit() {
 }
 
 function getCofounderContext() {
-    const files = ["business.json", "cofounder-state.json", "memory.json"];
-    const savedContext = files.map(file => {
+    const readSource = (file) => {
         try {
-            const raw = fs.readFileSync(file, "utf8");
-            return "--- " + file + " ---\n" + raw.slice(0, 6000);
-        } catch (error) {
-            return "";
+            if (!fs.existsSync(file)) return { status: "MISSING", data: null, modified: null };
+            const stat = fs.statSync(file);
+            const data = JSON.parse(fs.readFileSync(file, "utf8"));
+            return { status: "READABLE", data, modified: stat.mtime.toISOString() };
+        } catch (_) {
+            return { status: "INVALID_OR_UNREADABLE", data: null, modified: null };
         }
-    }).filter(Boolean).join("\n\n");
+    };
+    const sources = {
+        business: readSource("business.json"),
+        state: readSource("cofounder-state.json"),
+        memory: readSource("memory.json")
+    };
+    const business = sources.business.data && typeof sources.business.data === "object" ? sources.business.data : {};
+    const state = sources.state.data && typeof sources.state.data === "object" ? sources.state.data : {};
+    const memory = Array.isArray(sources.memory.data) ? sources.memory.data : [];
+    const list = value => Array.isArray(value) ? value : [];
+    const prospects = list(business.prospects);
+    const opportunities = list(business.opportunities);
+    const followUps = list(business.followUps);
+    const offers = list(business.offers);
+    const revenue = list(business.revenue);
+    const goals = list(state.goals);
+    const decisions = list(state.decisions);
+    const approvals = list(state.approvals);
+    const lessons = list(state.lessons);
+    const research = list(state.research);
+    const open = item => !["CLOSED", "DONE", "COMPLETED", "CANCELLED", "CANCELED", "RESOLVED"]
+        .includes(String(item && item.status || "").trim().toUpperCase());
+    const activeProspects = prospects.filter(open);
+    const openOpportunities = opportunities.filter(item => String(item.status || "").toUpperCase() === "OPEN");
+    const openFollowUps = followUps.filter(item => ["OPEN", "PENDING", "IN_PROGRESS"].includes(String(item.status || "").trim().toUpperCase()));
+    const activeGoals = goals.filter(item => String(item.status || "").toUpperCase() === "ACTIVE");
+    const activeApprovals = approvals.filter(item => String(item.status || "").toUpperCase() === "ACTIVE");
+    const unverifiedResearch = research.filter(item => String(item.status || "").toUpperCase() === "UNVERIFIED");
+    const clean = (value, max = 220) => String(value == null ? "" : value).replace(/\s+/g, " ").trim().slice(0, max);
+    const pick = (item, keys, max = 220) => {
+        for (const key of keys) {
+            const value = clean(item && item[key], max);
+            if (value) return value;
+        }
+        return "";
+    };
+    const describeSource = (label, source) => {
+        const freshness = source.modified ? "; last modified " + source.modified : "";
+        return "- " + label + ": " + source.status + freshness;
+    };
+    const lines = [
+        "LOCAL SOURCE STATUS (private local files; never assume missing data is zero):",
+        describeSource("business.json", sources.business),
+        describeSource("cofounder-state.json", sources.state),
+        describeSource("memory.json", sources.memory),
+        "",
+        "CURRENT LOCAL RECORD SUMMARY:"
+    ];
+
+    lines.push("Pipeline counts: " + activeProspects.length + " open prospect(s) / " + prospects.length + " total; " +
+        openOpportunities.length + " open opportunity/opportunities; " + openFollowUps.length + " open follow-up(s); " +
+        offers.length + " offer(s); " + revenue.length + " revenue record(s).");
+    lines.push("Knowledge counts: " + activeGoals.length + " active goal(s); " + decisions.length + " decision(s); " +
+        activeApprovals.length + " active approval(s); " + lessons.length + " lesson(s); " +
+        unverifiedResearch.length + " unverified research item(s); " + memory.length + " saved memory item(s).");
+    if (sources.business.status !== "READABLE") {
+        lines.push("Business data limitation: business.json is " + sources.business.status + "; pipeline details below are unavailable, not confirmed empty.");
+    }
+    if (sources.state.status !== "READABLE") {
+        lines.push("State data limitation: cofounder-state.json is " + sources.state.status + "; goals, decisions, approvals, lessons and research may be unavailable.");
+    }
+    if (sources.memory.status !== "READABLE") {
+        lines.push("Memory limitation: memory.json is " + sources.memory.status + "; saved memories are unavailable.");
+    }
+
+    if (activeProspects.length > 0) {
+        lines.push("", "OPEN PROSPECTS (up to 5; discovery gaps are not buyer confirmation):");
+        activeProspects.slice(0, 5).forEach(prospect => {
+            const discovery = prospect.discovery || {};
+            const missing = [
+                ["problem", "problem"], ["impact", "impact"], ["currentSolution", "current solution"],
+                ["desiredOutcome", "desired outcome"], ["decisionMaker", "decision maker"],
+                ["budget", "budget"], ["timeline", "timeline"]
+            ].filter(([key]) => !clean(discovery[key], 1)).map(([, label]) => label);
+            lines.push("- " + (pick(prospect, ["name"]) || "Unnamed prospect") +
+                " | status: " + (pick(prospect, ["status"]) || "unknown") +
+                " | qualification: " + (pick(prospect.qualification || {}, ["status"]) || "not recorded"));
+            if (pick(discovery, ["problem"])) lines.push("  Problem: " + pick(discovery, ["problem"]));
+            if (pick(discovery, ["impact"])) lines.push("  Impact: " + pick(discovery, ["impact"]));
+            if (pick(discovery, ["desiredOutcome"])) lines.push("  Desired outcome: " + pick(discovery, ["desiredOutcome"]));
+            lines.push("  Missing discovery: " + (missing.length ? missing.join(", ") : "none of the checked fields"));
+        });
+        if (activeProspects.length > 5) lines.push("- " + (activeProspects.length - 5) + " more open prospect(s) omitted from this bounded summary.");
+    }
+
+    if (openFollowUps.length > 0) {
+        const dueDate = item => {
+            const raw = item && (item.dueDate || item.dueAt || item.scheduledFor);
+            if (!raw) return null;
+            const date = new Date(raw);
+            return Number.isNaN(date.getTime()) ? null : date;
+        };
+        const ordered = openFollowUps.slice().sort((a, b) => {
+            const ad = dueDate(a), bd = dueDate(b);
+            if (ad && bd) return ad - bd;
+            if (ad) return -1;
+            if (bd) return 1;
+            return 0;
+        });
+        lines.push("", "OPEN FOLLOW-UPS (up to 6; no action is taken automatically):");
+        ordered.slice(0, 6).forEach(item => {
+            const due = dueDate(item);
+            lines.push("- " + (pick(item, ["text", "title", "description"]) || "Follow-up details not recorded.") +
+                " | due: " + (due ? due.toISOString().slice(0, 10) : "unknown") +
+                " | status: " + (pick(item, ["status"]) || "unknown"));
+        });
+    }
+
+    if (openOpportunities.length > 0) {
+        lines.push("", "OPEN OPPORTUNITIES (up to 5):");
+        openOpportunities.slice(0, 5).forEach(item => {
+            lines.push("- " + (pick(item, ["name", "title", "text", "description"]) || "Unnamed opportunity") +
+                " | value: " + (pick(item, ["value", "amount", "expectedRevenue"]) || "unknown") +
+                " | next step: " + (pick(item, ["nextStep", "nextAction"]) || "not recorded"));
+        });
+    }
+
+    if (activeGoals.length > 0) {
+        lines.push("", "ACTIVE GOALS (up to 5):");
+        activeGoals.slice(0, 5).forEach(item => lines.push("- " +
+            (pick(item, ["text", "goal", "title", "description"]) || "Goal details not recorded.")));
+    }
+
+    if (activeApprovals.length > 0) {
+        lines.push("", "ACTIVE APPROVALS (up to 3; review status before acting):");
+        activeApprovals.slice(0, 3).forEach(item => lines.push("- " +
+            (pick(item, ["action", "description", "decision", "text"]) || "Approval details not recorded.")));
+    }
+
+    if (decisions.length > 0) {
+        lines.push("", "RECENT DECISIONS (latest 4):");
+        decisions.slice(-4).reverse().forEach(item => lines.push("- " +
+            (pick(item, ["decision", "title", "text"]) || "Decision details not recorded.") +
+            " | outcome: " + (pick(item, ["outcome", "status"]) || "not recorded")));
+    }
+
+    if (lessons.length > 0) {
+        lines.push("", "RECENT LESSONS (latest 4):");
+        lessons.slice(-4).reverse().forEach(item => lines.push("- " +
+            (pick(item, ["lesson", "text", "learning", "description"]) || "Lesson details not recorded.")));
+    }
+
+    if (unverifiedResearch.length > 0) {
+        lines.push("", "UNVERIFIED RESEARCH (up to 3; do not treat as confirmed fact):");
+        unverifiedResearch.slice(-3).reverse().forEach(item => lines.push("- " +
+            (pick(item, ["query", "title", "text"]) || "Research query not recorded.") +
+            " | prospect: " + (pick(item, ["prospectName"]) || "unassigned") +
+            " | retrieved: " + (pick(item, ["createdAt", "retrievedAt", "date"]) || "unknown")));
+    }
+
+    if (memory.length > 0) {
+        lines.push("", "SAVED MEMORY (latest 5):");
+        memory.slice(-5).reverse().forEach(item => lines.push("- " +
+            (pick(item, ["text", "content", "memory"]) || "Memory details not recorded.")));
+    }
+
     return [
         "VERIFIED COMPANY CONTEXT:",
         "- Company: Zayzana Tech, South Africa.",
@@ -2080,10 +2236,10 @@ function getCofounderContext() {
         "- Budget is constrained; prefer free or low-cost tools.",
         "- Existing projects include Taalhuis, Fishing Logbook, Sizani, and Cofounder.",
         "- Existing projects demonstrate work, but do not assume they prove an untested commercial capability.",
+        "- Keep verified facts separate from hypotheses. Ask for clarification if local records conflict or are incomplete.",
         "",
-        "CURRENT LOCAL RECORDS:",
-        savedContext || "No local context files could be read."
-    ].join("\n").slice(0, 18000);
+        lines.join("\n")
+    ].join("\n").slice(0, 14000);
 }
 
 function buildCofounderMessage(prompt) {
