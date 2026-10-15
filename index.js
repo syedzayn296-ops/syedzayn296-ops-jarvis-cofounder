@@ -4106,7 +4106,7 @@ rl.on("SIGINT", () => {
     queuedCommands.length = 0;
     stopSpeech();
     if (activeAiRequest) cancelActiveAiRequest();
-    console.log("\\nCOFOUNDER > Interrupted. Speech stopped; shutting down.");
+    console.log("\nCOFOUNDER > Interrupted. Speech stopped; shutting down.");
     rl.close();
 });
 
