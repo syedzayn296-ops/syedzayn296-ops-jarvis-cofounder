@@ -5,7 +5,7 @@
 
 - **Repository:** https://github.com/syedzayn296-ops/syedzayn296-ops-jarvis-cofounder
 - **Working branch for the current code line:** `development`
-- **Code baseline before the hub documentation commits:** `e445f0d` — Strip Markdown formatting from spoken responses. Documentation-only commits have advanced remote `development` beyond that baseline (hub, README link, and subsequent hub corrections). The local source/test changes described below are still not synced.
+- **Current remote development head (verified 2026-10-14):** `997e69a` — Simplify Cofounder AI provider routing. Direct Gemini is the default provider; Ollama is an explicit local option. GitHub Actions test run #22 passed. The local machine still needs a real provider/voice smoke test.
 - **Local working copy:** `C:\Users\ZAYZA\JARVIS-Cofounder-Clean`
 - **Operating principle:** Discover first. Qualify second. Recommend third. Execute only after Zayn approves.  
 **Active cleanup task:** [Issue #4 — Reconcile local patch and verify provider routing](https://github.com/syedzayn296-ops/syedzayn296-ops-jarvis-cofounder/issues/4).
@@ -13,9 +13,10 @@
 ## 1. Current state — read this first
 
 ### Confirmed
-- The local working copy was based on remote commit `e445f0d`.
-- Local `index.js` and `test/jarvis-smoke.test.js` contain unpublished changes.
-- Local syntax check passed and the local suite passed **50/50 tests** on 2026-10-14.
+- The local working copy was previously based on remote commit `e445f0d`.
+- Remote `development` now contains the provider-routing changes in commit `997e69a`; the branch is 9 commits ahead of `e445f0d` and not behind it.
+- The latest GitHub Actions run for `development`, run #22 on commit `997e69a`, completed successfully on 2026-10-14.
+- A previous local syntax check and test suite passed **50/50 tests** on 2026-10-14; that historical local result is not proof that the current local checkout matches remote `development`.
 - A patch backup was created at `Desktop\COFOUNDER-LOCAL-CHANGES.patch`; a separate audit report was created at `Desktop\COFOUNDER-AUDIT.txt`.
 - Antigravity CLI exists at `%LOCALAPPDATA%\agy\bin\agy.exe`; its help output confirms support for `--sandbox`, `--output-format text`, and `--print`.
 - OmniRoute's script exists at `%APPDATA%\npm\node_modules\omniroute\bin\omniroute.mjs`.
@@ -23,23 +24,24 @@
 - A prior test in the older `JARVIS\jarvis.js` app successfully returned `Gemini connection works` using the Gemini API and model override `gemini-3.5-flash-lite`. **That does not mean direct Gemini is already integrated into this clean repository.**
 - `cofounder-settings.json` currently reports `speechEnabled: true`. Keep local settings and secrets out of Git.
 
-### Not yet confirmed / not yet synced
-- The current local changes have **not** been published to this repository as of this snapshot.
-- The real Antigravity-to-Cofounder round trip has not succeeded because of the quota response.
-- A working live OmniRoute fallback has not been verified.
-- Direct Gemini API fallback still needs to be deliberately implemented and tested if chosen.
-- The local worktree has backup files and other untracked files. Do not stage them wholesale.
+### Not yet confirmed
+- Whether the local PC checkout has pulled the latest remote `development` head `997e69a`.
+- Whether a real Gemini API request succeeds from the current local Cofounder app using the locally configured `GEMINI_API_KEY`.
+- Whether Windows speech output works end-to-end in the current checkout, and whether speech input is implemented (the inspected code confirms speech output, not voice input).
+- Whether local Ollama is installed, running, and has the configured model available.
+- The local archive/backup files remain safety copies; never stage them wholesale.
 
 ## 2. AI provider situation and intended behaviour
 
-Current local patch proposes:
-1. Antigravity first when available.
-2. On a quota-exhaustion response, stop and report it; do **not** waste requests on OmniRoute.
-3. On other Antigravity failures, try OmniRoute as fallback.
-4. Support local `stop` / `cancel` / `abort` while a request is running.
-5. Preserve recent conversation context in the request.
+Current remote implementation (`997e69a`):
+1. Direct Gemini API is the default provider (`GEMINI_API_KEY`; default model configured in code).
+2. Ollama is selected explicitly with `COFOUNDER_PROVIDER=ollama`; there is no automatic provider cascade.
+3. Requests use an abort signal and a configurable timeout (`COFOUNDER_AI_TIMEOUT_MS`, default 45 seconds).
+4. Local `stop` / `cancel` / `abort` can cancel an active request.
+5. Recent conversation turns are included in the prompt.
+6. API keys remain local environment variables and must never be committed.
 
-Required next design decision: integrate the previously tested direct Gemini API as a genuine alternative provider, using a key stored only in the local environment (never committed). Define and test provider order, timeout, cancellation, quota detection, and clear error reporting. Do not claim a provider works until an actual live response proves it. Do not use a paid service or upgrade without Zayn's explicit approval.
+GitHub Actions passed on the provider-routing commit. This verifies automated checks, not live credentials or the actual local microphone/speaker experience. The next product test is one real local Gemini exchange and speech output; do not spend money or upgrade a provider without Zayn's explicit approval.
 
 ## 3. Product purpose and operating rules
 
@@ -137,13 +139,12 @@ Every meaningful work session must update this repository, not just the PC or ch
 
 ## 9. Next actions — in order
 
-- [ ] Preserve the current local patch and audit files.
-- [ ] Review the local `index.js` and test diff against remote `development`; do not overwrite either side blindly.
-- [ ] Add a direct Gemini provider only with explicit timeout, cancellation, and quota/error handling; keep the API key local.
-- [ ] Add regression tests for provider order, quota handling, ordinary fallback, cancellation, and no external action without approval.
-- [ ] Run syntax checks and the full test suite.
-- [ ] Commit only reviewed files; keep backups and `cofounder-settings.json` untracked.
-- [ ] Push to the intended remote branch and verify GitHub Actions.
-- [ ] Continue migrating historic research/decisions from chat and local notes into the tracker or linked project records.
+- [x] Preserve the local patch, audit files, and backup archive (already completed in the prior session; do not repeat).
+- [x] Reconcile provider routing in remote `development`: commit `997e69a` uses direct Gemini by default and explicit local Ollama, with cancellation and timeout handling.
+- [x] Confirm GitHub Actions run #22 passed on `997e69a`.
+- [ ] On the PC, verify the local checkout is on `development` and pull the latest changes safely without overwriting local work.
+- [ ] Make one real Gemini request from the local app and confirm spoken output; keep the API key private.
+- [ ] After the local smoke test, prioritise voice input and a small, safe computer-control capability; do not return to provider architecture unless the real test reveals a defect.
+- [ ] Migrate historic research/decisions incrementally only when relevant to an active task.
 
 **Completion rule:** a task is not “done” merely because it worked once on the PC. It is done when the result, evidence, and relevant code/documentation are safely recorded in the canonical GitHub repository and the intended remote branch is verified.
