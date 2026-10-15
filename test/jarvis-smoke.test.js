@@ -1032,3 +1032,45 @@ test('stop interrupts an active AI request without switching providers', () => {
   assert.match(result.stdout ?? '', /Request cancelled by Zayn/);
   assert.doesNotMatch(result.stdout ?? '', /fallback provider|All AI providers failed/);
 });
+
+
+test('portfolio question lists all known projects instead of only the umbrella company', () => {
+  const { result } = runIsolatedJarvis(
+    {
+      prospects: [],
+      opportunities: [],
+      offers: [],
+      followUps: [],
+      revenue: []
+    },
+    'tell me about zayzana latest projects and products\\n'
+  );
+
+  assert.equal(result.status, 0);
+  assert.match(result.stdout ?? '', /ZAYZANA TECH — PROJECT PORTFOLIO/);
+  assert.match(result.stdout ?? '', /Zayzana Tech/);
+  assert.match(result.stdout ?? '', /Fishing Logbook/);
+  assert.match(result.stdout ?? '', /Taalhuis/);
+  assert.match(result.stdout ?? '', /Sizani/);
+  assert.match(result.stdout ?? '', /JARVIS/);
+  assert.match(result.stdout ?? '', /Take n Pay/);
+  assert.match(result.stdout ?? '', /does not mean it has paying customers or validated demand/);
+});
+
+test('single-project question still shows only the requested project', () => {
+  const { result } = runIsolatedJarvis(
+    {
+      prospects: [],
+      opportunities: [],
+      offers: [],
+      followUps: [],
+      revenue: []
+    },
+    'tell me about taalhuis\\n'
+  );
+
+  assert.equal(result.status, 0);
+  assert.match(result.stdout ?? '', /School-facing Afrikaans and education learning platform/);
+  assert.doesNotMatch(result.stdout ?? '', /ZAYZANA TECH — PROJECT PORTFOLIO/);
+  assert.doesNotMatch(result.stdout ?? '', /Fishing Logbook/);
+});
