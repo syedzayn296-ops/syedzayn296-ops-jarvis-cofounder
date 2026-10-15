@@ -1205,7 +1205,7 @@ test('AI context summarizes prioritized records and labels missing sources inste
   assert.match(capturedAIRequest ?? '', /Manual dispatch delays customer orders/);
   assert.match(capturedAIRequest ?? '', /Call buyer about paid pilot/);
   assert.match(capturedAIRequest ?? '', /Win first paid pilot/);
-  assert.match(capturedAIRequest ?? '', /UNVERIFIED research/);
+  assert.match(capturedAIRequest ?? '', /UNVERIFIED RESEARCH/);
   assert.match(capturedAIRequest ?? '', /Keep spending near zero/);
   assert.match(capturedAIRequest ?? '', /memory.json: READABLE/);
   assert.doesNotMatch(capturedAIRequest ?? '', /No local context files could be read/);
