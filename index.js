@@ -2219,10 +2219,19 @@ async function askCofounderAI(prompt) {
 }
 
 function showDailyBriefing() {
-    const currentBusiness = loadJson(businessFile, {
+    // Do not use loadJson here: it creates missing files, which would violate read-only mode.
+    const readOnlyJson = (file, fallback) => {
+        try {
+            if (!fs.existsSync(file)) return fallback;
+            return JSON.parse(fs.readFileSync(file, "utf8"));
+        } catch (_) {
+            return fallback;
+        }
+    };
+    const currentBusiness = readOnlyJson(businessFile, {
         prospects: [], opportunities: [], offers: [], followUps: [], revenue: []
     });
-    const state = loadJson("cofounder-state.json", {});
+    const state = readOnlyJson("cofounder-state.json", {});
     const list = value => Array.isArray(value) ? value : [];
     const prospects = list(currentBusiness.prospects);
     const opportunities = list(currentBusiness.opportunities);
@@ -2235,7 +2244,9 @@ function showDailyBriefing() {
         .includes(String(item && item.status || "").trim().toUpperCase());
     const openProspects = prospects.filter(isOpen);
     const openOpportunities = opportunities.filter(item => String(item.status || "").toUpperCase() === "OPEN");
-    const openFollowUps = followUps.filter(isOpen);
+    const openFollowUps = followUps.filter(item =>
+        ["OPEN", "PENDING", "IN_PROGRESS"].includes(String(item.status || "").trim().toUpperCase())
+    );
     const activeGoals = goals.filter(item => String(item.status || "").toUpperCase() === "ACTIVE");
     const activeApprovals = approvals.filter(item => String(item.status || "").toUpperCase() === "ACTIVE");
     const unverifiedResearch = research.filter(item => String(item.status || "").toUpperCase() === "UNVERIFIED");
