@@ -1202,6 +1202,13 @@ test('AI context summarizes prioritized records and labels missing sources inste
   assert.equal(result.status, 0);
   assert.match(result.stdout ?? '', /GEMINI TEST RESPONSE/);
   assert.match(capturedAIRequest ?? '', /CURRENT LOCAL RECORD SUMMARY/);
+
+  assert.match(capturedAIRequest ?? '', /Commercial Strategist/);
+  assert.match(capturedAIRequest ?? '', /Customer\/Market Analyst/);
+  assert.match(capturedAIRequest ?? '', /Sceptic\/Risk Adviser/);
+  assert.match(capturedAIRequest ?? '', /Chair reconciles disagreements/);
+  assert.match(capturedAIRequest ?? '', /likelihood of payment/);
+  assert.match(capturedAIRequest ?? '', /cheapest next validation step/);
   assert.match(capturedAIRequest ?? '', /Manual dispatch delays customer orders/);
   assert.match(capturedAIRequest ?? '', /Call buyer about paid pilot/);
   assert.match(capturedAIRequest ?? '', /Win first paid pilot/);
