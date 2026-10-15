@@ -3975,7 +3975,7 @@ if (input === "commercial brain" || input === "commercial") { commercialBrain.an
         lower === "show all projects" ||
         lower === "what are we building" ||
         lower.includes("what are we building") ||
-        (lower.startsWith("tell me about ") && /\\b(projects|products|portfolio)\\b/.test(lower))
+        (lower.startsWith("tell me about ") && /\b(projects|products|portfolio)\b/.test(lower))
     ) {
         showPortfolio();
         return true;
