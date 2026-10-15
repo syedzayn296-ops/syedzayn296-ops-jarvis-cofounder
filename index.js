@@ -2226,6 +2226,19 @@ function handleCommand(input) {
         console.log("COFOUNDER > Understood. Standing by. No action will be taken without a new instruction.");
         return true;
     }
+
+    // READ-ONLY BUSINESS DATA HEALTH CHECK
+    if (
+        lower === "audit" ||
+        lower === "business audit" ||
+        lower === "audit business data" ||
+        lower === "audit my business data" ||
+        lower === "check business data"
+    ) {
+        runReadOnlyBusinessAudit();
+        return true;
+    }
+
     if (lower.startsWith("select prospect ")) {
         const requestedName = trimmed.slice("select prospect ".length).trim();
         const open = (business.prospects || []).filter(item => item.status !== "CLOSED");
@@ -3471,18 +3484,6 @@ if (input === "commercial brain" || input === "commercial") { commercialBrain.an
         lower === "show reminders"
     ) {
         showReminders();
-        return true;
-    }
-
-    // READ-ONLY BUSINESS DATA HEALTH CHECK
-    if (
-        lower === "audit" ||
-        lower === "business audit" ||
-        lower === "audit business data" ||
-        lower === "audit my business data" ||
-        lower === "check business data"
-    ) {
-        runReadOnlyBusinessAudit();
         return true;
     }
 
