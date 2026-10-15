@@ -1149,7 +1149,7 @@ test('daily briefing does not invent a prospect choice when several prospects ne
   assert.equal(result.status, 0);
   assert.match(result.stdout ?? '', /Choose which prospect to qualify next/);
   assert.match(result.stdout ?? '', /Test prospect, Second prospect/);
-  assert.match(result.stdout ?? '', /final offer recommendation would be premature/);
+  assert.match(result.stdout ?? '', /Several prospects have incomplete discovery/);
   assert.match(result.stdout ?? '', /contacting anyone/);
 });
 
