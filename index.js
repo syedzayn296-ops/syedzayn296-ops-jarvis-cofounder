@@ -47,6 +47,23 @@ const speechSettings = (() => {
 })();
 
 let speechQueue = Promise.resolve();
+const activeSpeakers = new Set();
+let speechEpoch = 0;
+
+function stopSpeech() {
+    speechEpoch += 1;
+    for (const speaker of activeSpeakers) {
+        try {
+            speaker.kill();
+        } catch (_) {}
+        // PowerShell owns the Windows speech synthesizer. Kill its process tree
+        // as well so speech cannot continue after Node or the console exits.
+        if (process.platform === "win32" && Number.isInteger(speaker.pid)) {
+            exec("taskkill /PID " + speaker.pid + " /T /F", { windowsHide: true }, () => {});
+        }
+    }
+    activeSpeakers.clear();
+}
 
 function speakText(text) {
     // Convert common Markdown formatting into natural speech instead of reading symbols aloud.
@@ -71,19 +88,35 @@ function speakText(text) {
         "$t = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('" +
         encodedText + "')); $s.Speak($t); $s.Dispose();";
 
+    const queuedSpeechEpoch = speechEpoch;
     speechQueue = speechQueue.then(() => new Promise(resolve => {
+        // If speech was stopped while this item was queued, do not start it.
+        if (queuedSpeechEpoch !== speechEpoch) {
+            resolve();
+            return;
+        }
+
         const speaker = spawn("powershell.exe", [
             "-NoProfile",
             "-NonInteractive",
             "-ExecutionPolicy", "Bypass",
             "-Command", script
         ], { windowsHide: true, stdio: "ignore" });
+        activeSpeakers.add(speaker);
+        let settled = false;
+        const finish = () => {
+            activeSpeakers.delete(speaker);
+            if (!settled) {
+                settled = true;
+                resolve();
+            }
+        };
 
         speaker.on("error", error => {
             console.warn("COFOUNDER speech unavailable: " + error.message);
-            resolve();
+            finish();
         });
-        speaker.on("close", () => resolve());
+        speaker.on("close", finish);
     }));
     return speechQueue;
 }
@@ -4028,6 +4061,7 @@ const rl = readline.createInterface({
 rl.prompt();
 
 let commandBusy = false;
+let shuttingDown = false;
 const queuedCommands = [];
 let activeResponseLines = null;
 const originalConsoleLog = console.log;
@@ -4053,7 +4087,7 @@ async function processCommandLine(line) {
         const spokenResponse = responseLines
             .filter(text => !/COFOUNDER > Thinking\.\.\./i.test(text))
             .join(". ");
-        if (spokenResponse.trim()) await speakText(spokenResponse);
+        if (spokenResponse.trim() && !shuttingDown) await speakText(spokenResponse);
         commandBusy = false;
         if (!rl.closed) rl.prompt();
 
@@ -4063,6 +4097,18 @@ async function processCommandLine(line) {
         }
     }
 }
+
+rl.on("SIGINT", () => {
+    // Ctrl+C must stop the separate Windows speech process, not just Node.
+    // Close cleanly after cancelling any in-flight AI request.
+    if (shuttingDown) return;
+    shuttingDown = true;
+    queuedCommands.length = 0;
+    stopSpeech();
+    if (activeAiRequest) cancelActiveAiRequest();
+    console.log("\\nCOFOUNDER > Interrupted. Speech stopped; shutting down.");
+    rl.close();
+});
 
 rl.on("line", (line) => {
     const normalized = String(line || "").trim().toLowerCase();
