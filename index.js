@@ -4248,7 +4248,19 @@ async function processCommandLine(line) {
     const responseLines = [];
     activeResponseLines = responseLines;
     try {
-        await handleCommand(line);
+        const normalizedCommand = String(line || "").trim().toLowerCase();
+        const readOnlyAuditCommands = new Set([
+            "audit",
+            "business audit",
+            "audit business data",
+            "audit my business data",
+            "check business data"
+        ]);
+        if (readOnlyAuditCommands.has(normalizedCommand)) {
+            runReadOnlyBusinessAudit();
+        } else {
+            await handleCommand(line);
+        }
     } catch (error) {
         console.log("\nCOFOUNDER > Command failed: " + error.message);
     } finally {
