@@ -1108,3 +1108,57 @@ test('read-only business audit reports local file health and missing memory with
   assert.deepEqual(afterBusiness, business);
   assert.deepEqual(afterState, state);
 });
+
+
+test('daily briefing ranks an overdue follow-up and reports real record counts without mutating state', () => {
+  const business = prospectFixture();
+  business.followUps = [
+    { text: 'Follow up with paying customer', status: 'OPEN', dueDate: '2026-01-01' },
+    { text: 'Later follow-up', status: 'OPEN', dueDate: '2099-01-01' }
+  ];
+  const state = {
+    goals: [{ title: 'Grow revenue', status: 'ACTIVE' }],
+    approvals: [],
+    lessons: []
+  };
+  const beforeBusiness = JSON.stringify(business);
+  const { result, business: afterBusiness, state: afterState } = runIsolatedJarvis(
+    business,
+    'briefing\n',
+    state
+  );
+
+  assert.equal(result.status, 0);
+  assert.match(result.stdout ?? '', /COFOUNDER DAILY BRIEFING/);
+  assert.match(result.stdout ?? '', /Open follow-ups: 2/);
+  assert.match(result.stdout ?? '', /Overdue follow-ups with a valid recorded date: 1/);
+  assert.match(result.stdout ?? '', /NEXT ACTION: Review overdue follow-up: Follow up with paying customer/);
+  assert.match(result.stdout ?? '', /PRIORITY SCORE: 110/);
+  assert.match(result.stdout ?? '', /READ ONLY/);
+  assert.equal(JSON.stringify(afterBusiness), beforeBusiness);
+  assert.deepEqual(afterState.goals, state.goals);
+  assert.deepEqual(afterState.approvals, state.approvals);
+  assert.deepEqual(afterState.lessons, state.lessons);
+});
+
+test('daily briefing does not invent a prospect choice when several prospects need discovery', () => {
+  const business = prospectFixture();
+  business.prospects.push({ name: 'Second prospect', status: 'NEW', discovery: {} });
+  const { result } = runIsolatedJarvis(business, 'daily briefing\n');
+
+  assert.equal(result.status, 0);
+  assert.match(result.stdout ?? '', /Choose which prospect to qualify next/);
+  assert.match(result.stdout ?? '', /Test prospect, Second prospect/);
+  assert.match(result.stdout ?? '', /final offer recommendation would be premature/);
+  assert.match(result.stdout ?? '', /contacting anyone/);
+});
+
+test('daily briefing gives a grounded first commercial action when the pipeline is empty', () => {
+  const business = { prospects: [], opportunities: [], offers: [], followUps: [], revenue: [] };
+  const { result } = runIsolatedJarvis(business, 'what should i do next\n');
+
+  assert.equal(result.status, 0);
+  assert.match(result.stdout ?? '', /No active prospect or open opportunity is recorded/);
+  assert.match(result.stdout ?? '', /Identify one real buyer/);
+  assert.match(result.stdout ?? '', /READ ONLY/);
+});
