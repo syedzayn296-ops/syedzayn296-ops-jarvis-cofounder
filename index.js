@@ -571,13 +571,26 @@ function openWebsite(name) {
 // BUSINESS BRAIN
 // --------------------------------------------------
 
-let business = loadJson(businessFile, {
+// Keep startup read-only for the business file: a missing or malformed file must
+// remain visible as a data problem instead of being silently replaced with empty data.
+const emptyBusiness = {
     prospects: [],
     opportunities: [],
     offers: [],
     followUps: [],
     revenue: []
-});
+};
+let business = (() => {
+    try {
+        if (!fs.existsSync(businessFile)) return { ...emptyBusiness };
+        const parsed = JSON.parse(fs.readFileSync(businessFile, "utf8"));
+        return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+            ? parsed
+            : { ...emptyBusiness };
+    } catch (_) {
+        return { ...emptyBusiness };
+    }
+})();
 
 function showBusinessOverview() {
     console.log("\nJARVIS BUSINESS BRAIN");
@@ -2063,16 +2076,172 @@ function runReadOnlyBusinessAudit() {
 }
 
 function getCofounderContext() {
-    const files = ["business.json", "cofounder-state.json", "memory.json"];
-    const savedContext = files.map(file => {
+    const readSource = (file) => {
         try {
-            const raw = fs.readFileSync(file, "utf8");
-            return "--- " + file + " ---\n" + raw.slice(0, 6000);
-        } catch (error) {
-            return "";
+            if (!fs.existsSync(file)) return { status: "MISSING", data: null, modified: null };
+            const stat = fs.statSync(file);
+            const data = JSON.parse(fs.readFileSync(file, "utf8"));
+            return { status: "READABLE", data, modified: stat.mtime.toISOString() };
+        } catch (_) {
+            return { status: "INVALID_OR_UNREADABLE", data: null, modified: null };
         }
-    }).filter(Boolean).join("\n\n");
-    return [
+    };
+    const sources = {
+        business: readSource("business.json"),
+        state: readSource("cofounder-state.json"),
+        memory: readSource("memory.json")
+    };
+    const business = sources.business.data && typeof sources.business.data === "object" ? sources.business.data : {};
+    const state = sources.state.data && typeof sources.state.data === "object" ? sources.state.data : {};
+    const memory = Array.isArray(sources.memory.data) ? sources.memory.data : [];
+    const list = value => Array.isArray(value) ? value : [];
+    const prospects = list(business.prospects);
+    const opportunities = list(business.opportunities);
+    const followUps = list(business.followUps);
+    const offers = list(business.offers);
+    const revenue = list(business.revenue);
+    const goals = list(state.goals);
+    const decisions = list(state.decisions);
+    const approvals = list(state.approvals);
+    const lessons = list(state.lessons);
+    const research = list(state.research);
+    const open = item => !["CLOSED", "DONE", "COMPLETED", "CANCELLED", "CANCELED", "RESOLVED"]
+        .includes(String(item && item.status || "").trim().toUpperCase());
+    const activeProspects = prospects.filter(open);
+    const openOpportunities = opportunities.filter(item => String(item.status || "").toUpperCase() === "OPEN");
+    const openFollowUps = followUps.filter(item => ["OPEN", "PENDING", "IN_PROGRESS"].includes(String(item.status || "").trim().toUpperCase()));
+    const activeGoals = goals.filter(item => String(item.status || "").toUpperCase() === "ACTIVE");
+    const activeApprovals = approvals.filter(item => String(item.status || "").toUpperCase() === "ACTIVE");
+    const unverifiedResearch = research.filter(item => String(item.status || "").toUpperCase() === "UNVERIFIED");
+    const clean = (value, max = 220) => String(value == null ? "" : value).replace(/\s+/g, " ").trim().slice(0, max);
+    const pick = (item, keys, max = 220) => {
+        for (const key of keys) {
+            const value = clean(item && item[key], max);
+            if (value) return value;
+        }
+        return "";
+    };
+    const describeSource = (label, source) => {
+        const freshness = source.modified ? "; last modified " + source.modified : "";
+        return "- " + label + ": " + source.status + freshness;
+    };
+    const lines = [
+        "LOCAL SOURCE STATUS (private local files; never assume missing data is zero):",
+        describeSource("business.json", sources.business),
+        describeSource("cofounder-state.json", sources.state),
+        describeSource("memory.json", sources.memory),
+        "",
+        "CURRENT LOCAL RECORD SUMMARY:"
+    ];
+
+    lines.push("Pipeline counts: " + activeProspects.length + " open prospect(s) / " + prospects.length + " total; " +
+        openOpportunities.length + " open opportunity/opportunities; " + openFollowUps.length + " open follow-up(s); " +
+        offers.length + " offer(s); " + revenue.length + " revenue record(s).");
+    lines.push("Knowledge counts: " + activeGoals.length + " active goal(s); " + decisions.length + " decision(s); " +
+        activeApprovals.length + " active approval(s); " + lessons.length + " lesson(s); " +
+        unverifiedResearch.length + " unverified research item(s); " + memory.length + " saved memory item(s).");
+    if (sources.business.status !== "READABLE") {
+        lines.push("Business data limitation: business.json is " + sources.business.status + "; pipeline details below are unavailable, not confirmed empty.");
+    }
+    if (sources.state.status !== "READABLE") {
+        lines.push("State data limitation: cofounder-state.json is " + sources.state.status + "; goals, decisions, approvals, lessons and research may be unavailable.");
+    }
+    if (sources.memory.status !== "READABLE") {
+        lines.push("Memory limitation: memory.json is " + sources.memory.status + "; saved memories are unavailable.");
+    }
+
+    if (activeProspects.length > 0) {
+        lines.push("", "OPEN PROSPECTS (up to 5; discovery gaps are not buyer confirmation):");
+        activeProspects.slice(0, 5).forEach(prospect => {
+            const discovery = prospect.discovery || {};
+            const missing = [
+                ["problem", "problem"], ["impact", "impact"], ["currentSolution", "current solution"],
+                ["desiredOutcome", "desired outcome"], ["decisionMaker", "decision maker"],
+                ["budget", "budget"], ["timeline", "timeline"]
+            ].filter(([key]) => !clean(discovery[key], 1)).map(([, label]) => label);
+            lines.push("- " + (pick(prospect, ["name"]) || "Unnamed prospect") +
+                " | status: " + (pick(prospect, ["status"]) || "unknown") +
+                " | qualification: " + (pick(prospect.qualification || {}, ["status"]) || "not recorded"));
+            if (pick(discovery, ["problem"])) lines.push("  Problem: " + pick(discovery, ["problem"]));
+            if (pick(discovery, ["impact"])) lines.push("  Impact: " + pick(discovery, ["impact"]));
+            if (pick(discovery, ["desiredOutcome"])) lines.push("  Desired outcome: " + pick(discovery, ["desiredOutcome"]));
+            lines.push("  Missing discovery: " + (missing.length ? missing.join(", ") : "none of the checked fields"));
+        });
+        if (activeProspects.length > 5) lines.push("- " + (activeProspects.length - 5) + " more open prospect(s) omitted from this bounded summary.");
+    }
+
+    if (openFollowUps.length > 0) {
+        const dueDate = item => {
+            const raw = item && (item.dueDate || item.dueAt || item.scheduledFor);
+            if (!raw) return null;
+            const date = new Date(raw);
+            return Number.isNaN(date.getTime()) ? null : date;
+        };
+        const ordered = openFollowUps.slice().sort((a, b) => {
+            const ad = dueDate(a), bd = dueDate(b);
+            if (ad && bd) return ad - bd;
+            if (ad) return -1;
+            if (bd) return 1;
+            return 0;
+        });
+        lines.push("", "OPEN FOLLOW-UPS (up to 6; no action is taken automatically):");
+        ordered.slice(0, 6).forEach(item => {
+            const due = dueDate(item);
+            lines.push("- " + (pick(item, ["text", "title", "description"]) || "Follow-up details not recorded.") +
+                " | due: " + (due ? due.toISOString().slice(0, 10) : "unknown") +
+                " | status: " + (pick(item, ["status"]) || "unknown"));
+        });
+    }
+
+    if (openOpportunities.length > 0) {
+        lines.push("", "OPEN OPPORTUNITIES (up to 5):");
+        openOpportunities.slice(0, 5).forEach(item => {
+            lines.push("- " + (pick(item, ["name", "title", "text", "description"]) || "Unnamed opportunity") +
+                " | value: " + (pick(item, ["value", "amount", "expectedRevenue"]) || "unknown") +
+                " | next step: " + (pick(item, ["nextStep", "nextAction"]) || "not recorded"));
+        });
+    }
+
+    if (activeGoals.length > 0) {
+        lines.push("", "ACTIVE GOALS (up to 5):");
+        activeGoals.slice(0, 5).forEach(item => lines.push("- " +
+            (pick(item, ["text", "goal", "title", "description"]) || "Goal details not recorded.")));
+    }
+
+    if (activeApprovals.length > 0) {
+        lines.push("", "ACTIVE APPROVALS (up to 3; review status before acting):");
+        activeApprovals.slice(0, 3).forEach(item => lines.push("- " +
+            (pick(item, ["action", "description", "decision", "text"]) || "Approval details not recorded.")));
+    }
+
+    if (decisions.length > 0) {
+        lines.push("", "RECENT DECISIONS (latest 4):");
+        decisions.slice(-4).reverse().forEach(item => lines.push("- " +
+            (pick(item, ["decision", "title", "text"]) || "Decision details not recorded.") +
+            " | outcome: " + (pick(item, ["outcome", "status"]) || "not recorded")));
+    }
+
+    if (lessons.length > 0) {
+        lines.push("", "RECENT LESSONS (latest 4):");
+        lessons.slice(-4).reverse().forEach(item => lines.push("- " +
+            (pick(item, ["lesson", "text", "learning", "description"]) || "Lesson details not recorded.")));
+    }
+
+    if (unverifiedResearch.length > 0) {
+        lines.push("", "UNVERIFIED RESEARCH (up to 3; do not treat as confirmed fact):");
+        unverifiedResearch.slice(-3).reverse().forEach(item => lines.push("- " +
+            (pick(item, ["query", "title", "text"]) || "Research query not recorded.") +
+            " | prospect: " + (pick(item, ["prospectName"]) || "unassigned") +
+            " | retrieved: " + (pick(item, ["createdAt", "retrievedAt", "date"]) || "unknown")));
+    }
+
+    if (memory.length > 0) {
+        lines.push("", "SAVED MEMORY (latest 5):");
+        memory.slice(-5).reverse().forEach(item => lines.push("- " +
+            (pick(item, ["text", "content", "memory"]) || "Memory details not recorded.")));
+    }
+
+    const completeContext = [
         "VERIFIED COMPANY CONTEXT:",
         "- Company: Zayzana Tech, South Africa.",
         "- Tagline: We find. We build. We solve.",
@@ -2080,10 +2249,14 @@ function getCofounderContext() {
         "- Budget is constrained; prefer free or low-cost tools.",
         "- Existing projects include Taalhuis, Fishing Logbook, Sizani, and Cofounder.",
         "- Existing projects demonstrate work, but do not assume they prove an untested commercial capability.",
+        "- Keep verified facts separate from hypotheses. Ask for clarification if local records conflict or are incomplete.",
         "",
-        "CURRENT LOCAL RECORDS:",
-        savedContext || "No local context files could be read."
-    ].join("\n").slice(0, 18000);
+        lines.join("\n")
+    ].join("\n");
+    const maxContextChars = 14000;
+    if (completeContext.length <= maxContextChars) return completeContext;
+    const truncationNotice = "\n\n[CONTEXT TRUNCATED: additional summarized records were omitted to fit the prompt. Ask for a focused summary of the relevant record category.]";
+    return completeContext.slice(0, maxContextChars - truncationNotice.length) + truncationNotice;
 }
 
 function buildCofounderMessage(prompt) {
@@ -2099,6 +2272,9 @@ function buildCofounderMessage(prompt) {
         "Answer follow-up questions using earlier turns. Do not ask the user to repeat facts already supplied.",
         "Distinguish verified facts from assumptions and unknowns. Never invent capabilities, prospects, revenue, pricing evidence, or completed actions.",
         "Challenge weak assumptions respectfully. Give one practical recommendation and explain its trade-off.",
+        "For commercial or strategic decisions, run an internal advisory board before answering: Commercial Strategist assesses cash flow, time-to-revenue, pricing and the route to a buyer; Customer/Market Analyst checks the buyer problem, demand evidence, alternatives and access to decision-makers; Sceptic/Risk Adviser challenges assumptions, hidden costs, delivery risk and reasons to kill the idea; Chair reconciles disagreements and chooses the best next move.",
+        "For competing opportunities, compare likelihood of payment, time to first cash, cost to test, repeatability, owned-asset value and strategic fit. State the evidence and uncertainty behind the comparison; do not invent scores or claim research that was not actually performed.",
+        "Return one ranked recommendation, the strongest reason against it, the most important unknown, a clear kill criterion, and the cheapest next validation step. Do not perform theatrical multi-agent dialogue unless asked; show concise conclusions and preserve founder approval for external actions.",
         "Discover first. Qualify second. Recommend third. Execute only after Zayn approves.",
         "",
         getCofounderContext(),
@@ -2218,6 +2394,195 @@ async function askCofounderAI(prompt) {
     }
 }
 
+function showDailyBriefing() {
+    // Do not use loadJson here: it creates missing files, which would violate read-only mode.
+    const readOnlyJson = (file, fallback) => {
+        try {
+            if (!fs.existsSync(file)) return { status: "MISSING", data: fallback };
+            return { status: "OK", data: JSON.parse(fs.readFileSync(file, "utf8")) };
+        } catch (_) {
+            return { status: "INVALID_OR_UNREADABLE", data: fallback };
+        }
+    };
+    const businessSource = readOnlyJson(businessFile, {
+        prospects: [], opportunities: [], offers: [], followUps: [], revenue: []
+    });
+    const stateSource = readOnlyJson("cofounder-state.json", {});
+    const currentBusiness = businessSource.data;
+    const state = stateSource.data;
+    const list = value => Array.isArray(value) ? value : [];
+    const prospects = list(currentBusiness.prospects);
+    const opportunities = list(currentBusiness.opportunities);
+    const followUps = list(currentBusiness.followUps);
+    const goals = list(state.goals);
+    const approvals = list(state.approvals);
+    const lessons = list(state.lessons);
+    const research = list(state.research);
+    const isOpen = item => !["CLOSED", "DONE", "COMPLETED", "CANCELLED", "CANCELED", "RESOLVED"]
+        .includes(String(item && item.status || "").trim().toUpperCase());
+    const openProspects = prospects.filter(isOpen);
+    const openOpportunities = opportunities.filter(item => String(item.status || "").toUpperCase() === "OPEN");
+    const openFollowUps = followUps.filter(item =>
+        ["OPEN", "PENDING", "IN_PROGRESS"].includes(String(item.status || "").trim().toUpperCase())
+    );
+    const activeGoals = goals.filter(item => String(item.status || "").toUpperCase() === "ACTIVE");
+    const activeApprovals = approvals.filter(item => String(item.status || "").toUpperCase() === "ACTIVE");
+    const unverifiedResearch = research.filter(item => String(item.status || "").toUpperCase() === "UNVERIFIED");
+    const now = new Date();
+    const getDueDate = item => {
+        const raw = item && (item.dueDate || item.dueAt || item.scheduledFor);
+        if (!raw) return null;
+        const date = new Date(raw);
+        return Number.isNaN(date.getTime()) ? null : date;
+    };
+    const overdueFollowUps = openFollowUps.map(item => ({ item, due: getDueDate(item) }))
+        .filter(entry => entry.due && entry.due.getTime() < now.getTime())
+        .sort((a, b) => a.due - b.due);
+    const incompleteProspects = openProspects.map(prospect => {
+        const discovery = prospect.discovery || {};
+        const missing = [
+            ["problem", "the confirmed business problem"],
+            ["impact", "the impact of the problem"],
+            ["desiredOutcome", "the desired measurable outcome"],
+            ["decisionMaker", "the decision maker"],
+            ["budget", "the budget or spending range"],
+            ["timeline", "the desired timeline"]
+        ].filter(([key]) => !String(discovery[key] || "").trim());
+        return { prospect, missing };
+    }).filter(entry => entry.missing.length > 0);
+    const candidates = [];
+
+    if (businessSource.status !== "OK") {
+        candidates.push({
+            priority: 120,
+            reason: "The business pipeline source is " + businessSource.status + "; its contents cannot be treated as an empty pipeline.",
+            action: "Restore or validate " + businessFile + " before relying on pipeline counts or commercial recommendations.",
+            evidence: businessFile + " status: " + businessSource.status
+        });
+    }
+    if (stateSource.status !== "OK") {
+        candidates.push({
+            priority: 115,
+            reason: "Cofounder state is " + stateSource.status + "; goals, approvals, lessons and research may be unavailable.",
+            action: "Restore or validate cofounder-state.json before relying on state-based recommendations.",
+            evidence: "cofounder-state.json status: " + stateSource.status
+        });
+    }
+
+    if (businessSource.status === "OK" && overdueFollowUps.length > 0) {
+        const entry = overdueFollowUps[0];
+        candidates.push({
+            priority: 110,
+            reason: "A recorded follow-up is past its due date.",
+            action: "Review overdue follow-up: " + String(entry.item.text || entry.item.title || "Follow-up details not recorded."),
+            evidence: "Due date: " + entry.due.toISOString().slice(0, 10)
+        });
+    } else if (businessSource.status === "OK" && openFollowUps.length > 0) {
+        const dated = openFollowUps.map(item => ({ item, due: getDueDate(item) }))
+            .filter(entry => entry.due).sort((a, b) => a.due - b.due);
+        const selected = dated.length > 0 ? dated[0].item : openFollowUps[0];
+        candidates.push({
+            priority: dated.length > 0 ? 90 : 85,
+            reason: dated.length > 0 ? "This is the next dated open follow-up." : "An open follow-up exists but has no recorded due date.",
+            action: "Review follow-up: " + String(selected.text || selected.title || "Follow-up details not recorded."),
+            evidence: dated.length > 0 ? "Recorded due date: " + dated[0].due.toISOString().slice(0, 10) : "Due date: unknown"
+        });
+    }
+
+    if (stateSource.status === "OK" && activeApprovals.length > 0) {
+        candidates.push({
+            priority: 100,
+            reason: "An active approval is waiting for founder review.",
+            action: "Review active approval: " + String(activeApprovals[0].action || activeApprovals[0].description || activeApprovals[0].decision || "Details not recorded."),
+            evidence: activeApprovals.length + " active approval(s) recorded."
+        });
+    }
+    if (businessSource.status === "OK" && incompleteProspects.length === 1) {
+        const entry = incompleteProspects[0];
+        candidates.push({
+            priority: 80,
+            reason: "Discovery is incomplete, so a final offer recommendation would be premature.",
+            action: "Qualify " + String(entry.prospect.name || "the open prospect") + ": capture " + entry.missing[0][1] + ".",
+            evidence: entry.missing.length + " required discovery field(s) still missing."
+        });
+    } else if (businessSource.status === "OK" && incompleteProspects.length > 1) {
+        candidates.push({
+            priority: 80,
+            reason: "Several prospects have incomplete discovery; choosing one without your direction would be arbitrary.",
+            action: "Choose which prospect to qualify next (" + incompleteProspects.length + " prospects have missing discovery).",
+            evidence: incompleteProspects.map(entry => String(entry.prospect.name || "Unnamed prospect")).slice(0, 5).join(", ")
+        });
+    }
+    if (businessSource.status === "OK" && openOpportunities.length > 0) {
+        candidates.push({
+            priority: 70,
+            reason: "An open commercial opportunity is recorded but needs a concrete next step.",
+            action: "Review opportunity: " + String(openOpportunities[0].text || openOpportunities[0].name || openOpportunities[0].title || "Details not recorded."),
+            evidence: openOpportunities.length + " open opportunity/opportunities recorded."
+        });
+    }
+    if (businessSource.status === "OK" && candidates.length === 0 && openProspects.length === 0 && openOpportunities.length === 0) {
+        candidates.push({
+            priority: 60,
+            reason: "No active prospect or open opportunity is recorded.",
+            action: "Identify one real buyer and investigate a specific, costly problem before building a solution.",
+            evidence: "No active prospects or open opportunities in business.json."
+        });
+    } else if (businessSource.status === "OK" && stateSource.status === "OK" && candidates.length === 0 && incompleteProspects.length === 0 && openFollowUps.length === 0 && activeApprovals.length === 0 && openOpportunities.length === 0) {
+        candidates.push({
+            priority: 50,
+            reason: "The recorded pipeline has no obvious immediate blocker.",
+            action: "Review the active goals and confirm which one most directly supports near-term revenue.",
+            evidence: activeGoals.length + " active goal(s) recorded."
+        });
+    }
+    candidates.sort((a, b) => b.priority - a.priority);
+    const top = candidates[0] || null;
+
+    console.log("\nCOFOUNDER DAILY BRIEFING");
+    console.log("========================");
+    console.log("Generated: " + now.toISOString());
+    console.log("Mode: READ ONLY — no records changed and no external actions taken.");
+    console.log("\nBUSINESS SNAPSHOT");
+    console.log("-----------------");
+    console.log("business.json status: " + businessSource.status);
+    console.log("cofounder-state.json status: " + stateSource.status);
+    console.log("Open prospects: " + (businessSource.status === "OK" ? openProspects.length + " (" + prospects.length + " total recorded)" : "UNAVAILABLE — source is " + businessSource.status));
+    console.log("Open opportunities: " + (businessSource.status === "OK" ? openOpportunities.length : "UNAVAILABLE"));
+    console.log("Open follow-ups: " + (businessSource.status === "OK" ? openFollowUps.length : "UNAVAILABLE"));
+    console.log("Overdue follow-ups with a valid recorded date: " + (businessSource.status === "OK" ? overdueFollowUps.length : "UNAVAILABLE"));
+    console.log("Active goals: " + (stateSource.status === "OK" ? activeGoals.length : "UNAVAILABLE"));
+    console.log("Active approvals: " + (stateSource.status === "OK" ? activeApprovals.length : "UNAVAILABLE"));
+    console.log("Unverified research items: " + (stateSource.status === "OK" ? unverifiedResearch.length : "UNAVAILABLE"));
+    console.log("Lessons recorded: " + (stateSource.status === "OK" ? lessons.length : "UNAVAILABLE"));
+    console.log("\nTOP PRIORITY");
+    console.log("------------");
+    if (top) {
+        console.log("NEXT ACTION: " + top.action);
+        console.log("WHY: " + top.reason);
+        console.log("EVIDENCE: " + top.evidence);
+        console.log("PRIORITY SCORE: " + top.priority + " (deterministic rule-based ranking, not a prediction of revenue)");
+    } else {
+        console.log("NEXT ACTION: Review the business records and choose the next measurable commercial outcome.");
+        console.log("WHY: No higher-priority action could be derived from the recorded data.");
+    }
+    console.log("\nDATA GAPS");
+    console.log("---------");
+    const gaps = [];
+    if (businessSource.status !== "OK") gaps.push("business.json is " + businessSource.status + "; pipeline counts and recommendations are unavailable.");
+    if (stateSource.status !== "OK") gaps.push("cofounder-state.json is " + stateSource.status + "; state-based counts and recommendations are unavailable.");
+    if (businessSource.status === "OK" && openFollowUps.some(item => !getDueDate(item))) gaps.push("Some open follow-ups have no valid due date.");
+    if (businessSource.status === "OK" && incompleteProspects.length > 0) gaps.push(incompleteProspects.length + " open prospect(s) need discovery.");
+    if (businessSource.status === "OK" && openOpportunities.some(item => !(item.value || item.amount || item.expectedRevenue))) gaps.push("At least one open opportunity has no recorded monetary value.");
+    if (stateSource.status === "OK" && activeGoals.length === 0) gaps.push("No active goal is recorded.");
+    if (gaps.length === 0) gaps.push("No obvious gap detected by these basic checks; this is not proof that the records are complete.");
+    gaps.forEach(gap => console.log("- " + gap));
+    console.log("\nSAFETY");
+    console.log("------");
+    console.log("This briefing is based only on local records. Missing data is unknown, not assumed.");
+    console.log("Recommendations do not authorise contacting anyone, spending money, publishing, or changing external systems.");
+}
+
 function handleCommand(input) {
     const trimmed = input.trim();
     if (!trimmed) return true;
@@ -2228,6 +2593,12 @@ function handleCommand(input) {
     }
     if (lower === "standby" || lower === "stand by" || lower === "hold") {
         console.log("COFOUNDER > Understood. Standing by. No action will be taken without a new instruction.");
+        return true;
+    }
+
+    // READ-ONLY DAILY BRIEFING — combines recorded state without changing it.
+    if (lower === "briefing" || lower === "daily briefing" || lower === "morning briefing" || lower === "what should i do next") {
+        showDailyBriefing();
         return true;
     }
 

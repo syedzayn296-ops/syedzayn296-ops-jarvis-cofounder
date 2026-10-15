@@ -17,6 +17,8 @@ function runIsolatedJarvis(business, input, state = {}, options = {}) {
       path.join(tempDir, 'business.json'),
       JSON.stringify(business, null, 2)
     );
+    if (options.omitBusinessData) fs.unlinkSync(path.join(tempDir, 'business.json'));
+    if (options.invalidBusinessData) fs.writeFileSync(path.join(tempDir, 'business.json'), '{ invalid json');
     fs.writeFileSync(
       path.join(tempDir, 'cofounder-state.json'),
       JSON.stringify({
@@ -33,6 +35,9 @@ function runIsolatedJarvis(business, input, state = {}, options = {}) {
       path.join(tempDir, 'cofounder-settings.json'),
       JSON.stringify({ speechEnabled: false })
     );
+    if (options.memoryData) {
+      fs.writeFileSync(path.join(tempDir, 'memory.json'), JSON.stringify(options.memoryData, null, 2));
+    }
     if (options.fakeResearch) {
       fs.writeFileSync(
         path.join(tempDir, 'mcporter.cmd'),
@@ -45,6 +50,7 @@ function runIsolatedJarvis(business, input, state = {}, options = {}) {
         path.join(tempDir, 'fake-fetch.cjs'),
         [
           'global.fetch = async function(url, options = {}) {',
+          '  if (process.env.COFOUNDER_CAPTURE_AI_REQUEST === "1") require("node:fs").writeFileSync("captured-ai-request.json", String(options.body || ""));',
           '  if (String(url).includes("/api/chat")) return { ok: true, status: 200, json: async () => ({ message: { content: "OLLAMA TEST RESPONSE" } }) };',
           '  if (process.env.COFOUNDER_TEST_FETCH_HANG === "1") {',
           '    return new Promise((resolve, reject) => {',
@@ -65,6 +71,7 @@ function runIsolatedJarvis(business, input, state = {}, options = {}) {
       GEMINI_API_KEY: options.fakeAIResponse || options.fakeAIHangs ? 'test-key' : '',
       COFOUNDER_PROVIDER: options.provider || 'gemini',
       COFOUNDER_TEST_FETCH_HANG: options.fakeAIHangs ? '1' : '0',
+      COFOUNDER_CAPTURE_AI_REQUEST: options.captureAIRequest ? '1' : '0',
       ...(options.fakeResearch ? { PATH: tempDir + ';' + (process.env.PATH || '') } : {}),
       ...((options.fakeAIResponse || options.fakeAIHangs) ? {
         NODE_OPTIONS: (process.env.NODE_OPTIONS ? process.env.NODE_OPTIONS + ' ' : '') + '--require=' + path.join(tempDir, 'fake-fetch.cjs').replace(/\\/g, '/')
@@ -81,12 +88,15 @@ function runIsolatedJarvis(business, input, state = {}, options = {}) {
 
     return {
       result,
-      business: JSON.parse(
-        fs.readFileSync(path.join(tempDir, 'business.json'), 'utf8')
-      ),
+      business: fs.existsSync(path.join(tempDir, 'business.json'))
+        ? (() => { try { return JSON.parse(fs.readFileSync(path.join(tempDir, 'business.json'), 'utf8')); } catch (_) { return null; } })()
+        : null,
       state: JSON.parse(
         fs.readFileSync(path.join(tempDir, 'cofounder-state.json'), 'utf8')
-      )
+      ),
+      capturedAIRequest: fs.existsSync(path.join(tempDir, 'captured-ai-request.json'))
+        ? fs.readFileSync(path.join(tempDir, 'captured-ai-request.json'), 'utf8')
+        : null
     };
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
@@ -1136,4 +1146,123 @@ test('read-only business audit reports local file health and missing memory with
   assert.match(result.stdout ?? '', /No files were modified by the audit/);
   assert.deepEqual(afterBusiness, business);
   assert.deepEqual(afterState, state);
+});
+
+
+test('daily briefing treats missing or invalid business data as unknown instead of an empty pipeline', () => {
+  for (const options of [{ omitBusinessData: true }, { invalidBusinessData: true }]) {
+    const { result, business } = runIsolatedJarvis(
+      { prospects: [], opportunities: [], offers: [], followUps: [], revenue: [] },
+      'briefing\n',
+      {},
+      options
+    );
+
+    assert.equal(result.status, 0);
+    assert.match(result.stdout ?? '', /business\.json status: (MISSING|INVALID_OR_UNREADABLE)/);
+    assert.match(result.stdout ?? '', /Open prospects: UNAVAILABLE/);
+    assert.match(result.stdout ?? '', /Restore or validate business\.json/);
+    assert.doesNotMatch(result.stdout ?? '', /No active prospect or open opportunity is recorded/);
+    assert.equal(business, null);
+  }
+});
+
+test('daily briefing ranks an overdue follow-up and reports real record counts without mutating state', () => {
+  const business = prospectFixture();
+  business.followUps = [
+    { text: 'Follow up with paying customer', status: 'OPEN', dueDate: '2026-01-01' },
+    { text: 'Later follow-up', status: 'OPEN', dueDate: '2099-01-01' }
+  ];
+  const state = {
+    goals: [{ title: 'Grow revenue', status: 'ACTIVE' }],
+    approvals: [],
+    lessons: []
+  };
+  const beforeBusiness = JSON.stringify(business);
+  const { result, business: afterBusiness, state: afterState } = runIsolatedJarvis(
+    business,
+    'briefing\n',
+    state
+  );
+
+  assert.equal(result.status, 0);
+  assert.match(result.stdout ?? '', /COFOUNDER DAILY BRIEFING/);
+  assert.match(result.stdout ?? '', /Open follow-ups: 2/);
+  assert.match(result.stdout ?? '', /Overdue follow-ups with a valid recorded date: 1/);
+  assert.match(result.stdout ?? '', /NEXT ACTION: Review overdue follow-up: Follow up with paying customer/);
+  assert.match(result.stdout ?? '', /PRIORITY SCORE: 110/);
+  assert.match(result.stdout ?? '', /READ ONLY/);
+  assert.equal(JSON.stringify(afterBusiness), beforeBusiness);
+  assert.deepEqual(afterState.goals, state.goals);
+  assert.deepEqual(afterState.approvals, state.approvals);
+  assert.deepEqual(afterState.lessons, state.lessons);
+});
+
+test('daily briefing does not invent a prospect choice when several prospects need discovery', () => {
+  const business = prospectFixture();
+  business.prospects.push({ name: 'Second prospect', status: 'NEW', discovery: {} });
+  const { result } = runIsolatedJarvis(business, 'daily briefing\n');
+
+  assert.equal(result.status, 0);
+  assert.match(result.stdout ?? '', /Choose which prospect to qualify next/);
+  assert.match(result.stdout ?? '', /Test prospect, Second prospect/);
+  assert.match(result.stdout ?? '', /Several prospects have incomplete discovery/);
+  assert.match(result.stdout ?? '', /contacting anyone/);
+});
+
+test('daily briefing gives a grounded first commercial action when the pipeline is empty', () => {
+  const business = { prospects: [], opportunities: [], offers: [], followUps: [], revenue: [] };
+  const { result } = runIsolatedJarvis(business, 'what should i do next\n');
+
+  assert.equal(result.status, 0);
+  assert.match(result.stdout ?? '', /No active prospect or open opportunity is recorded/);
+  assert.match(result.stdout ?? '', /Identify one real buyer/);
+  assert.match(result.stdout ?? '', /READ ONLY/);
+});
+
+
+test('AI context summarizes prioritized records and labels missing sources instead of dumping truncated JSON', () => {
+  const business = prospectFixture({
+    problem: 'Manual dispatch delays customer orders',
+    impact: 'Staff spend three hours each day updating customers',
+    desiredOutcome: 'Reduce customer update time'
+  });
+  business.followUps = [
+    { text: 'Call buyer about paid pilot', status: 'OPEN', dueDate: '2026-01-01' }
+  ];
+  const state = {
+    goals: [{ title: 'Win first paid pilot', status: 'ACTIVE' }],
+    decisions: [{ decision: 'Test one small paid pilot', outcome: 'pending' }],
+    approvals: [],
+    lessons: [{ text: 'Confirm buyer pain before building' }],
+    research: [{ query: 'Customer service workflow', prospectName: 'Test prospect', status: 'UNVERIFIED', createdAt: '2026-10-15' }]
+  };
+  const { result, capturedAIRequest } = runIsolatedJarvis(
+    business,
+    'What should we do next?\n',
+    state,
+    {
+      fakeAIResponse: true,
+      captureAIRequest: true,
+      memoryData: [{ text: 'Keep spending near zero', savedAt: '2026-10-15' }]
+    }
+  );
+
+  assert.equal(result.status, 0);
+  assert.match(result.stdout ?? '', /GEMINI TEST RESPONSE/);
+  assert.match(capturedAIRequest ?? '', /CURRENT LOCAL RECORD SUMMARY/);
+
+  assert.match(capturedAIRequest ?? '', /Commercial Strategist/);
+  assert.match(capturedAIRequest ?? '', /Customer\/Market Analyst/);
+  assert.match(capturedAIRequest ?? '', /Sceptic\/Risk Adviser/);
+  assert.match(capturedAIRequest ?? '', /Chair reconciles disagreements/);
+  assert.match(capturedAIRequest ?? '', /likelihood of payment/);
+  assert.match(capturedAIRequest ?? '', /cheapest next validation step/);
+  assert.match(capturedAIRequest ?? '', /Manual dispatch delays customer orders/);
+  assert.match(capturedAIRequest ?? '', /Call buyer about paid pilot/);
+  assert.match(capturedAIRequest ?? '', /Win first paid pilot/);
+  assert.match(capturedAIRequest ?? '', /UNVERIFIED RESEARCH/);
+  assert.match(capturedAIRequest ?? '', /Keep spending near zero/);
+  assert.match(capturedAIRequest ?? '', /memory.json: READABLE/);
+  assert.doesNotMatch(capturedAIRequest ?? '', /No local context files could be read/);
 });
