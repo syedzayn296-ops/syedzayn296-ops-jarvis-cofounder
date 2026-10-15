@@ -1,11 +1,11 @@
 # Cofounder Project Hub
 
-**Last updated:** 2026-10-14  
+**Last updated:** 2026-10-15  
 **Purpose:** One durable, phone-accessible home for Cofounder status, decisions, research pointers, safeguards, and next actions. This file is the first page to read when resuming work.
 
 - **Repository:** https://github.com/syedzayn296-ops/syedzayn296-ops-jarvis-cofounder
 - **Working branch for the current code line:** `development`
-- **Current remote development head (verified 2026-10-14):** `997e69a` — Simplify Cofounder AI provider routing. Direct Gemini is the default provider; Ollama is an explicit local option. GitHub Actions test run #22 passed. The local machine still needs a real provider/voice smoke test.
+- **Current remote development head (verified 2026-10-15):** `c1fd292` — Ctrl+C speech interruption fix and clean shutdown message. GitHub Actions run #25 passed. Zayn's latest manual test confirms live Gemini response, speech output, and immediate speech stop on Ctrl+C.
 - **Local working copy:** `C:\Users\ZAYZA\JARVIS-Cofounder-Clean`
 - **Operating principle:** Discover first. Qualify second. Recommend third. Execute only after Zayn approves.  
 **Active cleanup task:** [Issue #4 — Reconcile local patch and verify provider routing](https://github.com/syedzayn296-ops/syedzayn296-ops-jarvis-cofounder/issues/4).
@@ -15,7 +15,7 @@
 ### Confirmed
 - The local working copy was previously based on remote commit `e445f0d`.
 - Remote `development` now contains the provider-routing changes in commit `997e69a`; the branch is 9 commits ahead of `e445f0d` and not behind it.
-- The latest GitHub Actions run for `development`, run #22 on commit `997e69a`, completed successfully on 2026-10-14.
+- The latest GitHub Actions run for `development`, run #25 on commit `c1fd292`, completed successfully on 2026-10-15: [run #25](https://github.com/syedzayn296-ops/syedzayn296-ops-jarvis-cofounder/actions/runs/38665364762).
 - A previous local syntax check and test suite passed **50/50 tests** on 2026-10-14; that historical local result is not proof that the current local checkout matches remote `development`.
 - A patch backup was created at `Desktop\COFOUNDER-LOCAL-CHANGES.patch`; a separate audit report was created at `Desktop\COFOUNDER-AUDIT.txt`.
 - Antigravity CLI exists at `%LOCALAPPDATA%\agy\bin\agy.exe`; its help output confirms support for `--sandbox`, `--output-format text`, and `--print`.
@@ -25,9 +25,9 @@
 - `cofounder-settings.json` currently reports `speechEnabled: true`. Keep local settings and secrets out of Git.
 
 ### Not yet confirmed
-- Whether the local PC checkout has pulled the latest remote `development` head `997e69a`.
-- Whether a real Gemini API request succeeds from the current local Cofounder app using the locally configured `GEMINI_API_KEY`.
-- Whether Windows speech output works end-to-end in the current checkout, and whether speech input is implemented (the inspected code confirms speech output, not voice input).
+- Whether the local PC checkout has pulled the latest remote `development` head `c1fd292`.
+- Local private business-state quality/counts cannot be verified from GitHub; run the planned read-only local audit before trusting counts or freshness.
+- Speech output and Ctrl+C interruption were manually verified by Zayn on 2026-10-15. Speech input is not implemented/verified in the inspected code.
 - Whether local Ollama is installed, running, and has the configured model available.
 - The local archive/backup files remain safety copies; never stage them wholesale.
 
@@ -81,7 +81,7 @@ git diff --check
 git status --short
 ```
 
-The test suite has passed locally at 50/50 on 2026-10-14, but the **unpublished local patch** is not covered by the current remote commit until it is committed and pushed. Run the suite again after any provider-routing changes.
+The repository currently contains 51 smoke/regression test cases. GitHub Actions run #25 passed on `c1fd292`. Zayn's latest manual smoke test confirmed a live Gemini answer and immediate speech stop on Ctrl+C. Run the suite again after every code change; automated CI does not prove the local API key or private local data is correct.
 
 ## 6. Commercial research and pipeline
 
@@ -137,14 +137,12 @@ Every meaningful work session must update this repository, not just the PC or ch
 5. **End every session:** update “Current state,” “Next actions,” and any changed decision or research record.
 6. **Resume anywhere:** use this GitHub repository from a browser on the PC or phone. Chat history is useful context, but not the only archive.
 
-## 9. Next actions — in order
+## 9. Latest capability audit (2026-10-15)\n\nThe full source/test review is recorded in [Cofounder Capability Audit](COFOUNDER-CAPABILITY-AUDIT-2026-10-15.md). Key conclusion: keep the working AI/voice foundation and improve the business-state workflow rather than adding another provider or more architecture. A concrete routing gap was reproduced in source: requests starting `tell me about ` are intercepted by the single-project lookup, so “tell me about Zayzana latest projects and products” returns only the umbrella-company record.\n\n## 10. Next actions — in order
 
 - [x] Preserve the local patch, audit files, and backup archive (already completed in the prior session; do not repeat).
 - [x] Reconcile provider routing in remote `development`: commit `997e69a` uses direct Gemini by default and explicit local Ollama, with cancellation and timeout handling.
 - [x] Confirm GitHub Actions run #22 passed on `997e69a`.
-- [ ] On the PC, verify the local checkout is on `development` and pull the latest changes safely without overwriting local work.
-- [ ] Make one real Gemini request from the local app and confirm spoken output; keep the API key private.
-- [ ] After the local smoke test, prioritise voice input and a small, safe computer-control capability; do not return to provider architecture unless the real test reveals a defect.
+- [x] Confirm direct Gemini answer, Windows speech output, and immediate Ctrl+C speech stop in Zayn's manual test on 2026-10-15.\n- [ ] On the PC, verify the local checkout is on `development` and pull the latest changes safely without overwriting local work.\n- [ ] Implement a portfolio/list-all command and regression tests for multi-project questions.\n- [ ] Add a read-only local business-data audit (file presence, parse status, timestamps, record counts, missing fields; no secrets or writes).\n- [ ] Build a read-only daily briefing that ranks one next action using real follow-ups, prospects, goals and blockers.\n- [ ] Improve the AI context builder so it prioritises relevant records and reports missing/truncated context instead of blindly slicing JSON files.\n- [ ] Defer voice input and computer control until the above reliability gaps are fixed.
 - [ ] Migrate historic research/decisions incrementally only when relevant to an active task.
 
 **Completion rule:** a task is not “done” merely because it worked once on the PC. It is done when the result, evidence, and relevant code/documentation are safely recorded in the canonical GitHub repository and the intended remote branch is verified.
