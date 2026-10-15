@@ -810,7 +810,7 @@ function showActionBrain() {
         return;
     }
 
-    if (businessSource.status === "OK" && openOpportunities.length > 0) {
+    if (openOpportunities.length > 0) {
         console.log(
             `Develop the open opportunity: ${openOpportunities[0].text}`
         );
@@ -1876,7 +1876,7 @@ function evaluateHeartbeat() {
     const state = loadJson("cofounder-state.json", {});
     const activeApprovals = Array.isArray(state.approvals) ? state.approvals.filter(a => a.status === "ACTIVE") : [];
 
-    if (stateSource.status === "OK" && activeApprovals.length > 0) {
+    if (activeApprovals.length > 0) {
         signals.push({
             priority: 90,
             type: "APPROVAL",
@@ -2476,7 +2476,7 @@ function showDailyBriefing() {
         });
     }
 
-    if (activeApprovals.length > 0) {
+    if (stateSource.status === "OK" && activeApprovals.length > 0) {
         candidates.push({
             priority: 100,
             reason: "An active approval is waiting for founder review.",
@@ -2500,7 +2500,7 @@ function showDailyBriefing() {
             evidence: incompleteProspects.map(entry => String(entry.prospect.name || "Unnamed prospect")).slice(0, 5).join(", ")
         });
     }
-    if (openOpportunities.length > 0) {
+    if (businessSource.status === "OK" && openOpportunities.length > 0) {
         candidates.push({
             priority: 70,
             reason: "An open commercial opportunity is recorded but needs a concrete next step.",
