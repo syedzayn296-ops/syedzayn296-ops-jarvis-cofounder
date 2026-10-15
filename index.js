@@ -523,6 +523,24 @@ function showProject(key) {
     }
 }
 
+function showPortfolio() {
+    console.log("\nZAYZANA TECH — PROJECT PORTFOLIO");
+    console.log("--------------------------------");
+
+    Object.values(projects).forEach((project, index) => {
+        console.log("\n" + (index + 1) + ". " + project.name);
+        console.log("   Description: " + project.description);
+        console.log("   Status: " + project.status);
+        if (project.link) {
+            console.log("   Link: " + project.link);
+        } else {
+            console.log("   Link: Not published / not recorded");
+        }
+    });
+
+    console.log("\nPortfolio rule: a project being listed does not mean it has paying customers or validated demand.");
+}
+
 // --------------------------------------------------
 // WEBSITE / APPLICATION OPENING
 // --------------------------------------------------
@@ -3942,6 +3960,24 @@ if (input === "commercial brain" || input === "commercial") { commercialBrain.an
         const description = parts.join(" ");
 
         addRevenue(amount, description);
+        return true;
+    }
+
+    // PORTFOLIO QUESTIONS must be handled before the single-project lookup.
+    // Otherwise a question about Zayzana's latest projects is reduced to the umbrella record.
+    if (
+        lower === "projects" ||
+        lower === "show projects" ||
+        lower === "products" ||
+        lower === "show products" ||
+        lower === "portfolio" ||
+        lower === "show portfolio" ||
+        lower === "show all projects" ||
+        lower === "what are we building" ||
+        lower.includes("what are we building") ||
+        (lower.startsWith("tell me about ") && /\\b(projects|products|portfolio)\\b/.test(lower))
+    ) {
+        showPortfolio();
         return true;
     }
 
