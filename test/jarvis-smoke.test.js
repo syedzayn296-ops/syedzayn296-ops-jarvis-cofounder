@@ -1124,15 +1124,15 @@ test('daily briefing treats missing or invalid business data as unknown instead 
   for (const options of [{ omitBusinessData: true }, { invalidBusinessData: true }]) {
     const { result, business } = runIsolatedJarvis(
       { prospects: [], opportunities: [], offers: [], followUps: [], revenue: [] },
-      'briefing\\n',
+      'briefing\n',
       {},
       options
     );
 
     assert.equal(result.status, 0);
-    assert.match(result.stdout ?? '', /business\\.json status: (MISSING|INVALID_OR_UNREADABLE)/);
+    assert.match(result.stdout ?? '', /business\.json status: (MISSING|INVALID_OR_UNREADABLE)/);
     assert.match(result.stdout ?? '', /Open prospects: UNAVAILABLE/);
-    assert.match(result.stdout ?? '', /Restore or validate business\\.json/);
+    assert.match(result.stdout ?? '', /Restore or validate business\.json/);
     assert.doesNotMatch(result.stdout ?? '', /No active prospect or open opportunity is recorded/);
     assert.equal(business, null);
   }
