@@ -571,13 +571,26 @@ function openWebsite(name) {
 // BUSINESS BRAIN
 // --------------------------------------------------
 
-let business = loadJson(businessFile, {
+// Keep startup read-only for the business file: a missing or malformed file must
+// remain visible as a data problem instead of being silently replaced with empty data.
+const emptyBusiness = {
     prospects: [],
     opportunities: [],
     offers: [],
     followUps: [],
     revenue: []
-});
+};
+let business = (() => {
+    try {
+        if (!fs.existsSync(businessFile)) return { ...emptyBusiness };
+        const parsed = JSON.parse(fs.readFileSync(businessFile, "utf8"));
+        return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+            ? parsed
+            : { ...emptyBusiness };
+    } catch (_) {
+        return { ...emptyBusiness };
+    }
+})();
 
 function showBusinessOverview() {
     console.log("\nJARVIS BUSINESS BRAIN");
@@ -2385,16 +2398,18 @@ function showDailyBriefing() {
     // Do not use loadJson here: it creates missing files, which would violate read-only mode.
     const readOnlyJson = (file, fallback) => {
         try {
-            if (!fs.existsSync(file)) return fallback;
-            return JSON.parse(fs.readFileSync(file, "utf8"));
+            if (!fs.existsSync(file)) return { status: "MISSING", data: fallback };
+            return { status: "OK", data: JSON.parse(fs.readFileSync(file, "utf8")) };
         } catch (_) {
-            return fallback;
+            return { status: "INVALID_OR_UNREADABLE", data: fallback };
         }
     };
-    const currentBusiness = readOnlyJson(businessFile, {
+    const businessSource = readOnlyJson(businessFile, {
         prospects: [], opportunities: [], offers: [], followUps: [], revenue: []
     });
-    const state = readOnlyJson("cofounder-state.json", {});
+    const stateSource = readOnlyJson("cofounder-state.json", {});
+    const currentBusiness = businessSource.data;
+    const state = stateSource.data;
     const list = value => Array.isArray(value) ? value : [];
     const prospects = list(currentBusiness.prospects);
     const opportunities = list(currentBusiness.opportunities);
@@ -2437,7 +2452,24 @@ function showDailyBriefing() {
     }).filter(entry => entry.missing.length > 0);
     const candidates = [];
 
-    if (overdueFollowUps.length > 0) {
+    if (businessSource.status !== "OK") {
+        candidates.push({
+            priority: 120,
+            reason: "The business pipeline source is " + businessSource.status + "; its contents cannot be treated as an empty pipeline.",
+            action: "Restore or validate " + businessFile + " before relying on pipeline counts or commercial recommendations.",
+            evidence: businessFile + " status: " + businessSource.status
+        });
+    }
+    if (stateSource.status !== "OK") {
+        candidates.push({
+            priority: 115,
+            reason: "Cofounder state is " + stateSource.status + "; goals, approvals, lessons and research may be unavailable.",
+            action: "Restore or validate cofounder-state.json before relying on state-based recommendations.",
+            evidence: "cofounder-state.json status: " + stateSource.status
+        });
+    }
+
+    if (businessSource.status === "OK" && overdueFollowUps.length > 0) {
         const entry = overdueFollowUps[0];
         candidates.push({
             priority: 110,
@@ -2445,7 +2477,7 @@ function showDailyBriefing() {
             action: "Review overdue follow-up: " + String(entry.item.text || entry.item.title || "Follow-up details not recorded."),
             evidence: "Due date: " + entry.due.toISOString().slice(0, 10)
         });
-    } else if (openFollowUps.length > 0) {
+    } else if (businessSource.status === "OK" && openFollowUps.length > 0) {
         const dated = openFollowUps.map(item => ({ item, due: getDueDate(item) }))
             .filter(entry => entry.due).sort((a, b) => a.due - b.due);
         const selected = dated.length > 0 ? dated[0].item : openFollowUps[0];
@@ -2457,7 +2489,7 @@ function showDailyBriefing() {
         });
     }
 
-    if (activeApprovals.length > 0) {
+    if (stateSource.status === "OK" && activeApprovals.length > 0) {
         candidates.push({
             priority: 100,
             reason: "An active approval is waiting for founder review.",
@@ -2465,7 +2497,7 @@ function showDailyBriefing() {
             evidence: activeApprovals.length + " active approval(s) recorded."
         });
     }
-    if (incompleteProspects.length === 1) {
+    if (businessSource.status === "OK" && incompleteProspects.length === 1) {
         const entry = incompleteProspects[0];
         candidates.push({
             priority: 80,
@@ -2473,7 +2505,7 @@ function showDailyBriefing() {
             action: "Qualify " + String(entry.prospect.name || "the open prospect") + ": capture " + entry.missing[0][1] + ".",
             evidence: entry.missing.length + " required discovery field(s) still missing."
         });
-    } else if (incompleteProspects.length > 1) {
+    } else if (businessSource.status === "OK" && incompleteProspects.length > 1) {
         candidates.push({
             priority: 80,
             reason: "Several prospects have incomplete discovery; choosing one without your direction would be arbitrary.",
@@ -2481,7 +2513,7 @@ function showDailyBriefing() {
             evidence: incompleteProspects.map(entry => String(entry.prospect.name || "Unnamed prospect")).slice(0, 5).join(", ")
         });
     }
-    if (openOpportunities.length > 0) {
+    if (businessSource.status === "OK" && openOpportunities.length > 0) {
         candidates.push({
             priority: 70,
             reason: "An open commercial opportunity is recorded but needs a concrete next step.",
@@ -2489,14 +2521,14 @@ function showDailyBriefing() {
             evidence: openOpportunities.length + " open opportunity/opportunities recorded."
         });
     }
-    if (candidates.length === 0 && openProspects.length === 0 && openOpportunities.length === 0) {
+    if (businessSource.status === "OK" && candidates.length === 0 && openProspects.length === 0 && openOpportunities.length === 0) {
         candidates.push({
             priority: 60,
             reason: "No active prospect or open opportunity is recorded.",
             action: "Identify one real buyer and investigate a specific, costly problem before building a solution.",
             evidence: "No active prospects or open opportunities in business.json."
         });
-    } else if (candidates.length === 0 && incompleteProspects.length === 0 && openFollowUps.length === 0 && activeApprovals.length === 0 && openOpportunities.length === 0) {
+    } else if (businessSource.status === "OK" && stateSource.status === "OK" && candidates.length === 0 && incompleteProspects.length === 0 && openFollowUps.length === 0 && activeApprovals.length === 0 && openOpportunities.length === 0) {
         candidates.push({
             priority: 50,
             reason: "The recorded pipeline has no obvious immediate blocker.",
@@ -2513,14 +2545,16 @@ function showDailyBriefing() {
     console.log("Mode: READ ONLY — no records changed and no external actions taken.");
     console.log("\nBUSINESS SNAPSHOT");
     console.log("-----------------");
-    console.log("Open prospects: " + openProspects.length + " (" + prospects.length + " total recorded)");
-    console.log("Open opportunities: " + openOpportunities.length);
-    console.log("Open follow-ups: " + openFollowUps.length);
-    console.log("Overdue follow-ups with a valid recorded date: " + overdueFollowUps.length);
-    console.log("Active goals: " + activeGoals.length);
-    console.log("Active approvals: " + activeApprovals.length);
-    console.log("Unverified research items: " + unverifiedResearch.length);
-    console.log("Lessons recorded: " + lessons.length);
+    console.log("business.json status: " + businessSource.status);
+    console.log("cofounder-state.json status: " + stateSource.status);
+    console.log("Open prospects: " + (businessSource.status === "OK" ? openProspects.length + " (" + prospects.length + " total recorded)" : "UNAVAILABLE — source is " + businessSource.status));
+    console.log("Open opportunities: " + (businessSource.status === "OK" ? openOpportunities.length : "UNAVAILABLE"));
+    console.log("Open follow-ups: " + (businessSource.status === "OK" ? openFollowUps.length : "UNAVAILABLE"));
+    console.log("Overdue follow-ups with a valid recorded date: " + (businessSource.status === "OK" ? overdueFollowUps.length : "UNAVAILABLE"));
+    console.log("Active goals: " + (stateSource.status === "OK" ? activeGoals.length : "UNAVAILABLE"));
+    console.log("Active approvals: " + (stateSource.status === "OK" ? activeApprovals.length : "UNAVAILABLE"));
+    console.log("Unverified research items: " + (stateSource.status === "OK" ? unverifiedResearch.length : "UNAVAILABLE"));
+    console.log("Lessons recorded: " + (stateSource.status === "OK" ? lessons.length : "UNAVAILABLE"));
     console.log("\nTOP PRIORITY");
     console.log("------------");
     if (top) {
@@ -2535,10 +2569,12 @@ function showDailyBriefing() {
     console.log("\nDATA GAPS");
     console.log("---------");
     const gaps = [];
-    if (openFollowUps.some(item => !getDueDate(item))) gaps.push("Some open follow-ups have no valid due date.");
-    if (incompleteProspects.length > 0) gaps.push(incompleteProspects.length + " open prospect(s) need discovery.");
-    if (openOpportunities.some(item => !(item.value || item.amount || item.expectedRevenue))) gaps.push("At least one open opportunity has no recorded monetary value.");
-    if (activeGoals.length === 0) gaps.push("No active goal is recorded.");
+    if (businessSource.status !== "OK") gaps.push("business.json is " + businessSource.status + "; pipeline counts and recommendations are unavailable.");
+    if (stateSource.status !== "OK") gaps.push("cofounder-state.json is " + stateSource.status + "; state-based counts and recommendations are unavailable.");
+    if (businessSource.status === "OK" && openFollowUps.some(item => !getDueDate(item))) gaps.push("Some open follow-ups have no valid due date.");
+    if (businessSource.status === "OK" && incompleteProspects.length > 0) gaps.push(incompleteProspects.length + " open prospect(s) need discovery.");
+    if (businessSource.status === "OK" && openOpportunities.some(item => !(item.value || item.amount || item.expectedRevenue))) gaps.push("At least one open opportunity has no recorded monetary value.");
+    if (stateSource.status === "OK" && activeGoals.length === 0) gaps.push("No active goal is recorded.");
     if (gaps.length === 0) gaps.push("No obvious gap detected by these basic checks; this is not proof that the records are complete.");
     gaps.forEach(gap => console.log("- " + gap));
     console.log("\nSAFETY");

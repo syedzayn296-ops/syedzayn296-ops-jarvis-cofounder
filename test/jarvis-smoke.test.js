@@ -17,6 +17,8 @@ function runIsolatedJarvis(business, input, state = {}, options = {}) {
       path.join(tempDir, 'business.json'),
       JSON.stringify(business, null, 2)
     );
+    if (options.omitBusinessData) fs.unlinkSync(path.join(tempDir, 'business.json'));
+    if (options.invalidBusinessData) fs.writeFileSync(path.join(tempDir, 'business.json'), '{ invalid json');
     fs.writeFileSync(
       path.join(tempDir, 'cofounder-state.json'),
       JSON.stringify({
@@ -86,9 +88,9 @@ function runIsolatedJarvis(business, input, state = {}, options = {}) {
 
     return {
       result,
-      business: JSON.parse(
-        fs.readFileSync(path.join(tempDir, 'business.json'), 'utf8')
-      ),
+      business: fs.existsSync(path.join(tempDir, 'business.json'))
+        ? (() => { try { return JSON.parse(fs.readFileSync(path.join(tempDir, 'business.json'), 'utf8')); } catch (_) { return null; } })()
+        : null,
       state: JSON.parse(
         fs.readFileSync(path.join(tempDir, 'cofounder-state.json'), 'utf8')
       ),
@@ -1117,6 +1119,24 @@ test('read-only business audit reports local file health and missing memory with
   assert.deepEqual(afterState, state);
 });
 
+
+test('daily briefing treats missing or invalid business data as unknown instead of an empty pipeline', () => {
+  for (const options of [{ omitBusinessData: true }, { invalidBusinessData: true }]) {
+    const { result, business } = runIsolatedJarvis(
+      { prospects: [], opportunities: [], offers: [], followUps: [], revenue: [] },
+      'briefing\n',
+      {},
+      options
+    );
+
+    assert.equal(result.status, 0);
+    assert.match(result.stdout ?? '', /business\.json status: (MISSING|INVALID_OR_UNREADABLE)/);
+    assert.match(result.stdout ?? '', /Open prospects: UNAVAILABLE/);
+    assert.match(result.stdout ?? '', /Restore or validate business\.json/);
+    assert.doesNotMatch(result.stdout ?? '', /No active prospect or open opportunity is recorded/);
+    assert.equal(business, null);
+  }
+});
 
 test('daily briefing ranks an overdue follow-up and reports real record counts without mutating state', () => {
   const business = prospectFixture();
