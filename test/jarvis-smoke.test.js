@@ -33,6 +33,9 @@ function runIsolatedJarvis(business, input, state = {}, options = {}) {
       path.join(tempDir, 'cofounder-settings.json'),
       JSON.stringify({ speechEnabled: false })
     );
+    if (options.memoryData) {
+      fs.writeFileSync(path.join(tempDir, 'memory.json'), JSON.stringify(options.memoryData, null, 2));
+    }
     if (options.fakeResearch) {
       fs.writeFileSync(
         path.join(tempDir, 'mcporter.cmd'),
@@ -45,6 +48,7 @@ function runIsolatedJarvis(business, input, state = {}, options = {}) {
         path.join(tempDir, 'fake-fetch.cjs'),
         [
           'global.fetch = async function(url, options = {}) {',
+          '  if (process.env.COFOUNDER_CAPTURE_AI_REQUEST === "1") require("node:fs").writeFileSync("captured-ai-request.json", String(options.body || ""));',
           '  if (String(url).includes("/api/chat")) return { ok: true, status: 200, json: async () => ({ message: { content: "OLLAMA TEST RESPONSE" } }) };',
           '  if (process.env.COFOUNDER_TEST_FETCH_HANG === "1") {',
           '    return new Promise((resolve, reject) => {',
@@ -65,6 +69,7 @@ function runIsolatedJarvis(business, input, state = {}, options = {}) {
       GEMINI_API_KEY: options.fakeAIResponse || options.fakeAIHangs ? 'test-key' : '',
       COFOUNDER_PROVIDER: options.provider || 'gemini',
       COFOUNDER_TEST_FETCH_HANG: options.fakeAIHangs ? '1' : '0',
+      COFOUNDER_CAPTURE_AI_REQUEST: options.captureAIRequest ? '1' : '0',
       ...(options.fakeResearch ? { PATH: tempDir + ';' + (process.env.PATH || '') } : {}),
       ...((options.fakeAIResponse || options.fakeAIHangs) ? {
         NODE_OPTIONS: (process.env.NODE_OPTIONS ? process.env.NODE_OPTIONS + ' ' : '') + '--require=' + path.join(tempDir, 'fake-fetch.cjs').replace(/\\/g, '/')
@@ -86,7 +91,10 @@ function runIsolatedJarvis(business, input, state = {}, options = {}) {
       ),
       state: JSON.parse(
         fs.readFileSync(path.join(tempDir, 'cofounder-state.json'), 'utf8')
-      )
+      ),
+      capturedAIRequest: fs.existsSync(path.join(tempDir, 'captured-ai-request.json'))
+        ? fs.readFileSync(path.join(tempDir, 'captured-ai-request.json'), 'utf8')
+        : null
     };
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
@@ -1161,4 +1169,44 @@ test('daily briefing gives a grounded first commercial action when the pipeline 
   assert.match(result.stdout ?? '', /No active prospect or open opportunity is recorded/);
   assert.match(result.stdout ?? '', /Identify one real buyer/);
   assert.match(result.stdout ?? '', /READ ONLY/);
+});
+
+
+test('AI context summarizes prioritized records and labels missing sources instead of dumping truncated JSON', () => {
+  const business = prospectFixture({
+    problem: 'Manual dispatch delays customer orders',
+    impact: 'Staff spend three hours each day updating customers',
+    desiredOutcome: 'Reduce customer update time'
+  });
+  business.followUps = [
+    { text: 'Call buyer about paid pilot', status: 'OPEN', dueDate: '2026-01-01' }
+  ];
+  const state = {
+    goals: [{ title: 'Win first paid pilot', status: 'ACTIVE' }],
+    decisions: [{ decision: 'Test one small paid pilot', outcome: 'pending' }],
+    approvals: [],
+    lessons: [{ text: 'Confirm buyer pain before building' }],
+    research: [{ query: 'Customer service workflow', prospectName: 'Test prospect', status: 'UNVERIFIED', createdAt: '2026-10-15' }]
+  };
+  const { result, capturedAIRequest } = runIsolatedJarvis(
+    business,
+    'What should we do next?\n',
+    state,
+    {
+      fakeAIResponse: true,
+      captureAIRequest: true,
+      memoryData: [{ text: 'Keep spending near zero', savedAt: '2026-10-15' }]
+    }
+  );
+
+  assert.equal(result.status, 0);
+  assert.match(result.stdout ?? '', /GEMINI TEST RESPONSE/);
+  assert.match(capturedAIRequest ?? '', /CURRENT LOCAL RECORD SUMMARY/);
+  assert.match(capturedAIRequest ?? '', /Manual dispatch delays customer orders/);
+  assert.match(capturedAIRequest ?? '', /Call buyer about paid pilot/);
+  assert.match(capturedAIRequest ?? '', /Win first paid pilot/);
+  assert.match(capturedAIRequest ?? '', /UNVERIFIED RESEARCH/);
+  assert.match(capturedAIRequest ?? '', /Keep spending near zero/);
+  assert.match(capturedAIRequest ?? '', /memory.json: READABLE/);
+  assert.doesNotMatch(capturedAIRequest ?? '', /No local context files could be read/);
 });
