@@ -1277,7 +1277,7 @@ test('multiline paste mode sends a complete prompt as one AI request', () => {
       followUps: [],
       revenue: []
     },
-    'paste\nProduce the complete offer.\nInclude prices, costs, and the message draft.\nDo not ask me to repeat the instruction.\nEND\n',
+    'paste\nProcess the complete instruction.\nInclude prices, costs, and the message draft.\nDo not ask me to repeat the instruction.\nEND\n',
     {},
     { fakeAIResponse: true, captureAIRequest: true }
   );
