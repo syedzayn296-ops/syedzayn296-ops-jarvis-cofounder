@@ -1277,7 +1277,7 @@ test('multiline paste mode sends a complete prompt as one AI request', () => {
       followUps: [],
       revenue: []
     },
-    'paste\nProduce the complete offer.\nInclude prices, costs, and the message draft.\nDo not ask me to repeat the instruction.\nEND\n',
+    'paste\nProcess the complete instruction.\nInclude prices, costs, and the message draft.\nDo not ask me to repeat the instruction.\nEND\n',
     {},
     { fakeAIResponse: true, captureAIRequest: true }
   );
@@ -1287,6 +1287,32 @@ test('multiline paste mode sends a complete prompt as one AI request', () => {
   assert.ok(capturedAIRequest, 'expected the AI request to be captured');
   const payload = JSON.parse(capturedAIRequest);
   const prompt = payload.contents[0].parts[0].text;
-  assert.match(prompt, /LATEST MESSAGE FROM ZAYN:\nProduce the complete offer\.\nInclude prices, costs, and the message draft\.\nDo not ask me to repeat the instruction\./);
-  assert.doesNotMatch(prompt, /LATEST MESSAGE FROM ZAYN:\nProduce the complete offer\.\nCOFOUNDER:/);
+  assert.match(prompt, /LATEST MESSAGE FROM ZAYN:\nProcess the complete instruction\.\nInclude prices, costs, and the message draft\.\nDo not ask me to repeat the instruction\./);
+  assert.doesNotMatch(prompt, /LATEST MESSAGE FROM ZAYN:\nProcess the complete instruction\.\nCOFOUNDER:/);
+});
+
+
+test('commercial deliverables receive a second-pass evidence and delivery audit', () => {
+  const { result, capturedAIRequest } = runIsolatedJarvis(
+    {
+      prospects: [],
+      opportunities: [],
+      offers: [],
+      followUps: [],
+      revenue: []
+    },
+    'Produce a complete commercial decision brief for a pilot offer with pricing and delivery scope.\n',
+    {},
+    { fakeAIResponse: true, captureAIRequest: true }
+  );
+
+  assert.equal(result.status, 0, 'stdout: ' + result.stdout + '\nstderr: ' + result.stderr);
+  assert.match(result.stdout ?? '', /Running commercial evidence and delivery audit/);
+  assert.ok(capturedAIRequest, 'expected the audit request to be captured');
+  const auditPayload = JSON.parse(capturedAIRequest);
+  const auditPrompt = auditPayload.contents[0].parts[0].text;
+  assert.match(auditPrompt, /independent commercial evidence and delivery reviewer/);
+  assert.match(auditPrompt, /Remove or qualify every feature/);
+  assert.match(auditPrompt, /founder labour using an explicit assumed hourly rate/);
+  assert.match(auditPrompt, /DRAFT TO AUDIT AND CORRECT/);
 });
