@@ -571,13 +571,26 @@ function openWebsite(name) {
 // BUSINESS BRAIN
 // --------------------------------------------------
 
-let business = loadJson(businessFile, {
+// Keep startup read-only for the business file: a missing or malformed file must
+// remain visible as a data problem instead of being silently replaced with empty data.
+const emptyBusiness = {
     prospects: [],
     opportunities: [],
     offers: [],
     followUps: [],
     revenue: []
-});
+};
+let business = (() => {
+    try {
+        if (!fs.existsSync(businessFile)) return { ...emptyBusiness };
+        const parsed = JSON.parse(fs.readFileSync(businessFile, "utf8"));
+        return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+            ? parsed
+            : { ...emptyBusiness };
+    } catch (_) {
+        return { ...emptyBusiness };
+    }
+})();
 
 function showBusinessOverview() {
     console.log("\nJARVIS BUSINESS BRAIN");
