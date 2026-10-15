@@ -1941,6 +1941,126 @@ function showHeartbeat() {
 // DIRECT GEMINI API + EXPLICIT LOCAL OLLAMA (NO AUTOMATIC FALLBACK)
 const conversationHistory = [];
 
+function runReadOnlyBusinessAudit() {
+    console.log("\nCOFOUNDER — READ-ONLY BUSINESS DATA AUDIT");
+    console.log("----------------------------------------");
+    console.log("Mode: READ ONLY. No business records will be created, changed, or deleted.");
+
+    const fileSpecs = [
+        {
+            file: "business.json",
+            arrays: ["prospects", "opportunities", "offers", "followUps", "revenue"],
+            requiredFields: {
+                prospects: ["name", "status"],
+                opportunities: ["name", "status"],
+                offers: ["name", "status"],
+                followUps: ["status"],
+                revenue: ["amount", "date"]
+            }
+        },
+        {
+            file: "cofounder-state.json",
+            arrays: ["goals", "decisions", "approvals", "executions", "lessons", "research"],
+            requiredFields: {
+                goals: ["title"],
+                decisions: ["title"],
+                approvals: ["action"],
+                executions: ["action"],
+                lessons: ["lesson"],
+                research: ["query"]
+            }
+        },
+        {
+            file: "memory.json",
+            arrays: ["memories", "entries", "facts", "notes"],
+            requiredFields: {}
+        }
+    ];
+
+    let problemCount = 0;
+    for (const spec of fileSpecs) {
+        console.log("\n" + spec.file);
+        console.log("-".repeat(spec.file.length));
+
+        if (!fs.existsSync(spec.file)) {
+            console.log("Status: MISSING");
+            console.log("Counts: unavailable");
+            console.log("No file was created.");
+            problemCount += 1;
+            continue;
+        }
+
+        let raw;
+        let parsed;
+        let stat;
+        try {
+            stat = fs.statSync(spec.file);
+            raw = fs.readFileSync(spec.file, "utf8");
+        } catch (error) {
+            console.log("Status: UNREADABLE");
+            console.log("Reason: " + error.message);
+            problemCount += 1;
+            continue;
+        }
+
+        console.log("Last modified: " + stat.mtime.toISOString());
+        console.log("Size: " + stat.size + " bytes");
+
+        try {
+            parsed = JSON.parse(raw);
+        } catch (error) {
+            console.log("Status: INVALID JSON");
+            console.log("Parse error: " + error.message);
+            problemCount += 1;
+            continue;
+        }
+
+        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+            console.log("Status: VALID JSON, UNEXPECTED TOP-LEVEL SHAPE");
+            problemCount += 1;
+            continue;
+        }
+
+        console.log("Status: OK — JSON parsed");
+        let arraysFound = 0;
+        for (const key of spec.arrays) {
+            if (Array.isArray(parsed[key])) {
+                arraysFound += 1;
+                console.log(key + ": " + parsed[key].length + " record(s)");
+                const required = spec.requiredFields[key] || [];
+                if (required.length > 0) {
+                    const incomplete = parsed[key].filter(item =>
+                        !item || typeof item !== "object" ||
+                        required.some(field => item[field] === undefined ||
+                            item[field] === null ||
+                            (typeof item[field] === "string" && item[field].trim() === ""))
+                    ).length;
+                    if (incomplete > 0) {
+                        console.log("  Records missing required fields: " + incomplete);
+                        problemCount += incomplete;
+                    }
+                }
+            } else if (parsed[key] !== undefined) {
+                console.log(key + ": present but not an array");
+                problemCount += 1;
+            }
+        }
+        if (arraysFound === 0) {
+            console.log("Known record arrays: none found (check schema if this is unexpected)");
+        }
+    }
+
+    console.log("\nAUDIT SUMMARY");
+    console.log("-------------");
+    if (problemCount === 0) {
+        console.log("No missing/invalid files or required-field gaps were detected by these checks.");
+    } else {
+        console.log("Items requiring review: " + problemCount);
+    }
+    console.log("This audit checks file health and selected required fields only; it does not prove records are current or commercially accurate.");
+    console.log("No files were modified by the audit.");
+}
+
 function getCofounderContext() {
     const files = ["business.json", "cofounder-state.json", "memory.json"];
     const savedContext = files.map(file => {
@@ -3351,6 +3471,18 @@ if (input === "commercial brain" || input === "commercial") { commercialBrain.an
         lower === "show reminders"
     ) {
         showReminders();
+        return true;
+    }
+
+    // READ-ONLY BUSINESS DATA HEALTH CHECK
+    if (
+        lower === "audit" ||
+        lower === "business audit" ||
+        lower === "audit business data" ||
+        lower === "audit my business data" ||
+        lower === "check business data"
+    ) {
+        runReadOnlyBusinessAudit();
         return true;
     }
 
