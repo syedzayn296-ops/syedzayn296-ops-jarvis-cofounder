@@ -1094,7 +1094,7 @@ test('read-only business audit reports local file health and missing memory with
   };
   const { result, business: afterBusiness, state: afterState } = runIsolatedJarvis(
     business,
-    'audit\\n',
+    'audit\n',
     state
   );
 
