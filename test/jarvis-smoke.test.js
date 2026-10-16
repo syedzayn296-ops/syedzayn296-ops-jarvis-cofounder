@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { spawnSync } = require('node:child_process');
+const { spawnSync, spawn } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -19,17 +19,19 @@ function runIsolatedJarvis(business, input, state = {}, options = {}) {
     );
     if (options.omitBusinessData) fs.unlinkSync(path.join(tempDir, 'business.json'));
     if (options.invalidBusinessData) fs.writeFileSync(path.join(tempDir, 'business.json'), '{ invalid json');
-    fs.writeFileSync(
-      path.join(tempDir, 'cofounder-state.json'),
-      JSON.stringify({
-        goals: [],
-        decisions: [],
-        approvals: [],
-        executions: [],
-        lessons: [],
-        ...state
-      }, null, 2)
-    );
+    if (!options.omitStateData) {
+      fs.writeFileSync(
+        path.join(tempDir, 'cofounder-state.json'),
+        JSON.stringify({
+          goals: [],
+          decisions: [],
+          approvals: [],
+          executions: [],
+          lessons: [],
+          ...state
+        }, null, 2)
+      );
+    }
 
     fs.writeFileSync(
       path.join(tempDir, 'cofounder-settings.json'),
@@ -38,20 +40,55 @@ function runIsolatedJarvis(business, input, state = {}, options = {}) {
     if (options.memoryData) {
       fs.writeFileSync(path.join(tempDir, 'memory.json'), JSON.stringify(options.memoryData, null, 2));
     }
+    if (options.seedProtectedFiles) {
+      for (const [name, content] of Object.entries(options.seedProtectedFiles)) {
+        fs.writeFileSync(path.join(tempDir, name), content);
+      }
+    }
     if (options.fakeResearch) {
       fs.writeFileSync(
         path.join(tempDir, 'mcporter.cmd'),
-        '@echo off\r\necho Title: Example Result\r\necho URL: https://example.com/test\r\n'
+        '@echo off\r\necho x>>research-calls.txt\r\necho Title: Example Result\r\necho URL: https://example.com/test\r\n'
+      );
+    }
+    if (options.fakeResearchError) {
+      fs.writeFileSync(
+        path.join(tempDir, 'mcporter.cmd'),
+        '@echo off\r\necho simulated research tool failure 1>&2\r\nexit /b 1\r\n'
       );
     }
 
-    if (options.fakeAIResponse || options.fakeAIHangs) {
+    if (options.fakeAIResponse || options.fakeAIHangs || options.fakeAIResponses || options.aiFailFirst) {
       fs.writeFileSync(
         path.join(tempDir, 'fake-fetch.cjs'),
         [
+          'let __jarvisCall = 0;',
+          'const __jarvisResponses = ' + JSON.stringify(options.fakeAIResponses || null) + ';',
+          'const __jarvisFailFirst = ' + Number(options.aiFailFirst || 0) + ';',
+          'const __jarvisDelaySpec = ' + JSON.stringify(options.fakeAIDelayMs ?? null) + ';',
           'global.fetch = async function(url, options = {}) {',
-          '  if (process.env.COFOUNDER_CAPTURE_AI_REQUEST === "1") require("node:fs").writeFileSync("captured-ai-request.json", String(options.body || ""));',
-          '  if (String(url).includes("/api/chat")) return { ok: true, status: 200, json: async () => ({ message: { content: "OLLAMA TEST RESPONSE" } }) };',
+          '  __jarvisCall++;',
+          '  const body = String(options.body || "");',
+          '  if (process.env.COFOUNDER_CAPTURE_AI_REQUEST === "1") require("node:fs").writeFileSync("captured-ai-request.json", body);',
+          '  if (process.env.COFOUNDER_CAPTURE_AI_REQUESTS === "1") require("node:fs").appendFileSync("captured-ai-requests.jsonl", body + "\\n");',
+          '  const __jarvisDelay = Array.isArray(__jarvisDelaySpec)',
+          '    ? (__jarvisDelaySpec[Math.min(__jarvisCall - 1, __jarvisDelaySpec.length - 1)] || 0)',
+          '    : (Number(__jarvisDelaySpec) || 0);',
+          '  if (__jarvisDelay) {',
+          '    await new Promise((resolve, reject) => {',
+          '      const signal = options.signal;',
+          '      const t = setTimeout(resolve, __jarvisDelay);',
+          '      if (signal) {',
+          '        if (signal.aborted) { clearTimeout(t); reject(signal.reason || new Error("aborted")); return; }',
+          '        signal.addEventListener("abort", () => { clearTimeout(t); reject(signal.reason || new Error("aborted")); }, { once: true });',
+          '      }',
+          '    });',
+          '  }',
+          '  if (__jarvisFailFirst && __jarvisCall <= __jarvisFailFirst) throw new Error("simulated AI failure " + __jarvisCall);',
+          '  if (String(url).includes("/api/chat")) {',
+          '    const ollamaText = __jarvisResponses ? __jarvisResponses[Math.min(__jarvisCall - 1, __jarvisResponses.length - 1)] : "OLLAMA TEST RESPONSE";',
+          '    return { ok: true, status: 200, json: async () => ({ message: { content: ollamaText } }) };',
+          '  }',
           '  if (process.env.COFOUNDER_TEST_FETCH_HANG === "1") {',
           '    return new Promise((resolve, reject) => {',
           '      const signal = options.signal;',
@@ -59,21 +96,25 @@ function runIsolatedJarvis(business, input, state = {}, options = {}) {
           '      if (signal) signal.addEventListener("abort", () => reject(signal.reason || new Error("aborted")), { once: true });',
           '    });',
           '  }',
-          '  return { ok: true, status: 200, json: async () => ({ candidates: [{ content: { parts: [{ text: "GEMINI TEST RESPONSE" }] } }] }) };',
+          '  const text = __jarvisResponses ? __jarvisResponses[Math.min(__jarvisCall - 1, __jarvisResponses.length - 1)] : "GEMINI TEST RESPONSE";',
+          '  return { ok: true, status: 200, json: async () => ({ candidates: [{ content: { parts: [{ text }] } }] }) };',
           '};',
           ''
         ].join('\n')
       );
     }
 
+    const usesFakeAI = options.fakeAIResponse || options.fakeAIHangs || options.fakeAIResponses || options.aiFailFirst;
     const env = {
       ...process.env,
-      GEMINI_API_KEY: options.fakeAIResponse || options.fakeAIHangs ? 'test-key' : '',
+      GEMINI_API_KEY: usesFakeAI ? 'test-key' : '',
       COFOUNDER_PROVIDER: options.provider || 'gemini',
       COFOUNDER_TEST_FETCH_HANG: options.fakeAIHangs ? '1' : '0',
       COFOUNDER_CAPTURE_AI_REQUEST: options.captureAIRequest ? '1' : '0',
-      ...(options.fakeResearch ? { PATH: tempDir + ';' + (process.env.PATH || '') } : {}),
-      ...((options.fakeAIResponse || options.fakeAIHangs) ? {
+      COFOUNDER_CAPTURE_AI_REQUESTS: options.captureAIRequests ? '1' : '0',
+      ...(options.aiTimeoutMs ? { COFOUNDER_AI_TIMEOUT_MS: String(options.aiTimeoutMs) } : {}),
+      ...((options.fakeResearch || options.fakeResearchError) ? { PATH: tempDir + ';' + (process.env.PATH || '') } : {}),
+      ...(usesFakeAI ? {
         NODE_OPTIONS: (process.env.NODE_OPTIONS ? process.env.NODE_OPTIONS + ' ' : '') + '--require=' + path.join(tempDir, 'fake-fetch.cjs').replace(/\\/g, '/')
       } : {})
     };
@@ -86,17 +127,31 @@ function runIsolatedJarvis(business, input, state = {}, options = {}) {
       timeout: 3000
     });
 
+    const requestsFile = path.join(tempDir, 'captured-ai-requests.jsonl');
+    const protectedNames = ['business.json', 'cofounder-state.json', 'memory.json', 'reminders.json', 'tasks.json', 'cofounder-settings.json'];
+    const protectedFiles = {};
+    for (const name of protectedNames) {
+      const filePath = path.join(tempDir, name);
+      protectedFiles[name] = fs.existsSync(filePath) ? fs.readFileSync(filePath, 'utf8') : null;
+    }
     return {
       result,
       business: fs.existsSync(path.join(tempDir, 'business.json'))
         ? (() => { try { return JSON.parse(fs.readFileSync(path.join(tempDir, 'business.json'), 'utf8')); } catch (_) { return null; } })()
         : null,
-      state: JSON.parse(
-        fs.readFileSync(path.join(tempDir, 'cofounder-state.json'), 'utf8')
-      ),
+      state: fs.existsSync(path.join(tempDir, 'cofounder-state.json'))
+        ? JSON.parse(fs.readFileSync(path.join(tempDir, 'cofounder-state.json'), 'utf8'))
+        : null,
       capturedAIRequest: fs.existsSync(path.join(tempDir, 'captured-ai-request.json'))
         ? fs.readFileSync(path.join(tempDir, 'captured-ai-request.json'), 'utf8')
-        : null
+        : null,
+      capturedAIRequests: fs.existsSync(requestsFile)
+        ? fs.readFileSync(requestsFile, 'utf8').split('\n').filter(Boolean)
+        : [],
+      researchCalls: fs.existsSync(path.join(tempDir, 'research-calls.txt'))
+        ? fs.readFileSync(path.join(tempDir, 'research-calls.txt'), 'utf8').split('\n').filter(Boolean).length
+        : 0,
+      protectedFiles
     };
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
@@ -1355,6 +1410,40 @@ test('stop interrupts an active AI request without switching providers', () => {
 });
 
 
+test('stop stops speech locally without ending the session', () => {
+  const { result } = runIsolatedJarvis(
+    prospectFixture(),
+    'stop\nWhat is our commercial focus?\n',
+    {},
+    { fakeAIResponse: true }
+  );
+
+  assert.equal(result.status, 0, 'stdout: ' + result.stdout + '\nstderr: ' + result.stderr);
+  assert.match(result.stdout ?? '', /No AI request is currently running/);
+  assert.match(result.stdout ?? '', /Speech stopped\. Cofounder is still running/);
+  // The session must survive a stop: the next command still reaches the AI.
+  assert.match(result.stdout ?? '', /GEMINI TEST RESPONSE/);
+});
+
+test('the response prompt is not blocked by speech playback', () => {
+  const source = fs.readFileSync(indexFile, 'utf8');
+  // Speech must never be awaited, otherwise the prompt waits for it to finish.
+  assert.doesNotMatch(source, /await\s+speakText\(/);
+  assert.match(source, /speakText\(spokenResponse\)/);
+});
+
+test('stop command handler stops speech and does not close the session', () => {
+  const source = fs.readFileSync(indexFile, 'utf8');
+  const start = source.indexOf('const isStopCommand =');
+  const end = source.indexOf('if (commandBusy) {', start);
+  assert.ok(start >= 0 && end > start, 'stop command handler should be present');
+  const handler = source.slice(start, end);
+  assert.match(handler, /stopSpeech\(\)/);
+  assert.doesNotMatch(handler, /rl\.close\(\)/);
+  assert.doesNotMatch(handler, /shuttingDown\s*=\s*true/);
+});
+
+
 test('portfolio question lists all known projects instead of only the umbrella company', () => {
   const { result } = runIsolatedJarvis(
     {
@@ -1614,4 +1703,368 @@ test('commercial deliverables receive a second-pass evidence and delivery audit'
   assert.match(auditPrompt, /Remove or qualify every feature/);
   assert.match(auditPrompt, /founder labour using an explicit assumed hourly rate/);
   assert.match(auditPrompt, /DRAFT TO AUDIT AND CORRECT/);
+});
+
+test('the commercial audit reuses the prepared context instead of rebuilding it', () => {
+  const source = fs.readFileSync(indexFile, 'utf8');
+  const start = source.indexOf('function buildCommercialDeliverableAuditMessage');
+  const end = source.indexOf('async function askCofounderAI', start);
+  assert.ok(start >= 0 && end > start, 'audit builder should be present');
+  const builder = source.slice(start, end);
+  // The safeguard still runs, but it must not recompute the company context.
+  assert.match(builder, /baseMessage/);
+  assert.doesNotMatch(builder, /buildCofounderMessage\(/);
+});
+
+test('ordinary prompts do not trigger the commercial evidence and delivery audit', () => {
+  const { result } = runIsolatedJarvis(
+    { prospects: [], opportunities: [], offers: [], followUps: [], revenue: [] },
+    'What is our commercial focus?\n',
+    {},
+    { fakeAIResponse: true }
+  );
+
+  assert.equal(result.status, 0, 'stdout: ' + result.stdout + '\nstderr: ' + result.stderr);
+  assert.match(result.stdout ?? '', /GEMINI TEST RESPONSE/);
+  assert.doesNotMatch(result.stdout ?? '', /Running commercial evidence and delivery audit/);
+});
+
+
+test('missing optional local state files do not stop a public research question from reaching the AI', () => {
+  const { result, capturedAIRequest } = runIsolatedJarvis(
+    null,
+    'Identify five real Durban bookkeeping practices with source URLs\n',
+    {},
+    { fakeAIResponse: true, captureAIRequest: true, omitBusinessData: true, omitStateData: true }
+  );
+
+  assert.equal(result.status, 0, 'stdout: ' + result.stdout + '\nstderr: ' + result.stderr);
+  assert.match(result.stdout ?? '', /GEMINI TEST RESPONSE/);
+  assert.match(capturedAIRequest ?? '', /business\.json: MISSING/);
+  assert.match(capturedAIRequest ?? '', /cofounder-state\.json: MISSING/);
+  // The AI is explicitly told that absent local state must not block a research task.
+  assert.match(capturedAIRequest ?? '', /must never be a reason to refuse/);
+});
+
+test('the assistant runs the existing live research tool once and grounds the answer on real results', () => {
+  const { result, capturedAIRequest, state } = runIsolatedJarvis(
+    { prospects: [], opportunities: [], offers: [], followUps: [], revenue: [] },
+    'Identify five real Durban bookkeeping practices with source URLs\n',
+    {},
+    {
+      fakeAIResponses: [
+        'RESEARCH_REQUEST: Durban KZN bookkeeping practices directory',
+        'GROUNDED ANSWER citing https://example.com/test'
+      ],
+      fakeResearch: true,
+      captureAIRequest: true
+    }
+  );
+
+  assert.equal(result.status, 0, 'stdout: ' + result.stdout + '\nstderr: ' + result.stderr);
+  assert.match(result.stdout ?? '', /Live web research returned/);
+  assert.match(result.stdout ?? '', /GROUNDED ANSWER/);
+  assert.ok(capturedAIRequest, 'expected the grounded request to be captured');
+  const prompt = JSON.parse(capturedAIRequest).contents[0].parts[0].text;
+  assert.match(prompt, /LIVE WEB RESEARCH RESULTS/);
+  assert.match(prompt, /https:\/\/example\.com\/test/);
+  // Results must remain in the response only, not be written to protected user data.
+  assert.ok(!state.research || state.research.length === 0);
+});
+
+test('a research request does not alter any protected user-data JSON file', () => {
+  const seeds = {
+    'business.json': JSON.stringify({ prospects: [], opportunities: [], offers: [], followUps: [], revenue: [], marker: 'business-untouched' }, null, 2),
+    'cofounder-state.json': JSON.stringify({ goals: [], decisions: [], approvals: [], executions: [], lessons: [], research: [], marker: 'state-untouched' }, null, 2),
+    'memory.json': JSON.stringify([{ text: 'keep me', marker: 'memory-untouched' }], null, 2),
+    'reminders.json': JSON.stringify([{ message: 'keep', time: 9999999999999, marker: 'reminders-untouched' }], null, 2),
+    'tasks.json': JSON.stringify([{ text: 'keep', marker: 'tasks-untouched' }], null, 2),
+    'cofounder-settings.json': JSON.stringify({ speechEnabled: false }, null, 2)
+  };
+  const { result, protectedFiles } = runIsolatedJarvis(
+    null,
+    'Identify five real Durban bookkeeping practices with source URLs\n',
+    {},
+    {
+      fakeAIResponses: [
+        'RESEARCH_REQUEST: Durban KZN bookkeeping practices directory',
+        'GROUNDED ANSWER citing https://example.com/test'
+      ],
+      fakeResearch: true,
+      seedProtectedFiles: seeds
+    }
+  );
+
+  assert.equal(result.status, 0, 'stdout: ' + result.stdout + '\nstderr: ' + result.stderr);
+  assert.match(result.stdout ?? '', /GROUNDED ANSWER/);
+  for (const [name, expected] of Object.entries(seeds)) {
+    assert.equal(protectedFiles[name], expected, name + ' must remain byte-identical after a research request');
+  }
+});
+
+test('a research request does not create protected user-data JSON files that are absent', () => {
+  const { result, protectedFiles, state } = runIsolatedJarvis(
+    { prospects: [], opportunities: [], offers: [], followUps: [], revenue: [] },
+    'Identify five real Durban bookkeeping practices with source URLs\n',
+    {},
+    {
+      fakeAIResponses: [
+        'RESEARCH_REQUEST: Durban bookkeeping practices',
+        'GROUNDED ANSWER citing https://example.com/test'
+      ],
+      fakeResearch: true,
+      omitStateData: true
+    }
+  );
+
+  assert.equal(result.status, 0, 'stdout: ' + result.stdout + '\nstderr: ' + result.stderr);
+  assert.equal(state, null);
+  assert.equal(protectedFiles['cofounder-state.json'], null, 'an absent cofounder-state.json must not be created');
+  assert.equal(protectedFiles['memory.json'], null, 'an absent memory.json must not be created');
+});
+
+test('a failed live search is reported honestly instead of inventing sources', () => {
+  const { result, capturedAIRequest, state } = runIsolatedJarvis(
+    { prospects: [], opportunities: [], offers: [], followUps: [], revenue: [] },
+    'Identify five real Durban bookkeeping practices with source URLs\n',
+    {},
+    {
+      fakeAIResponses: [
+        'RESEARCH_REQUEST: Durban bookkeeping practices',
+        'I could not verify these; no live results were returned.'
+      ],
+      fakeResearchError: true,
+      captureAIRequest: true
+    }
+  );
+
+  assert.equal(result.status, 0, 'stdout: ' + result.stdout + '\nstderr: ' + result.stderr);
+  assert.match(result.stdout ?? '', /Live web research failed/);
+  assert.match(result.stdout ?? '', /could not verify/);
+  const prompt = JSON.parse(capturedAIRequest).contents[0].parts[0].text;
+  assert.match(prompt, /The live web search tool failed/);
+  assert.ok(!state.research || state.research.length === 0, 'a failed search must not be saved as evidence');
+});
+
+test('a failed AI request is not retried automatically', () => {
+  const { result, capturedAIRequests } = runIsolatedJarvis(
+    { prospects: [], opportunities: [], offers: [], followUps: [], revenue: [] },
+    'What should we do next?\n',
+    {},
+    { fakeAIResponse: true, aiFailFirst: 1, captureAIRequests: true }
+  );
+
+  assert.equal(result.status, 0, 'stdout: ' + result.stdout + '\nstderr: ' + result.stderr);
+  assert.match(result.stdout ?? '', /AI request failed/);
+  assert.equal(capturedAIRequests.length, 1, 'a failed request must not create an automatic retry');
+});
+
+test('a failed AI request does not contaminate the next prompt', () => {
+  const { capturedAIRequests } = runIsolatedJarvis(
+    { prospects: [], opportunities: [], offers: [], followUps: [], revenue: [] },
+    'UNIQUE FAILED PROMPT alpha\nWhat is our commercial focus?\n',
+    {},
+    { fakeAIResponse: true, aiFailFirst: 1, captureAIRequests: true }
+  );
+
+  assert.equal(capturedAIRequests.length, 2);
+  const second = JSON.parse(capturedAIRequests[1]).contents[0].parts[0].text;
+  assert.doesNotMatch(second, /UNIQUE FAILED PROMPT alpha/);
+  assert.match(second, /LATEST MESSAGE FROM ZAYN:\nWhat is our commercial focus\?/);
+});
+
+test('each queued command produces its own coherent request without merging', () => {
+  const { capturedAIRequests } = runIsolatedJarvis(
+    { prospects: [], opportunities: [], offers: [], followUps: [], revenue: [] },
+    'First distinct question about alpha\nSecond distinct question about beta\n',
+    {},
+    { fakeAIResponse: true, captureAIRequests: true }
+  );
+
+  assert.equal(capturedAIRequests.length, 2);
+  const first = JSON.parse(capturedAIRequests[0]).contents[0].parts[0].text;
+  const second = JSON.parse(capturedAIRequests[1]).contents[0].parts[0].text;
+  assert.match(first, /LATEST MESSAGE FROM ZAYN:\nFirst distinct question about alpha/);
+  assert.doesNotMatch(first, /Second distinct question about beta/);
+  assert.match(second, /LATEST MESSAGE FROM ZAYN:\nSecond distinct question about beta/);
+  assert.doesNotMatch(second, /LATEST MESSAGE FROM ZAYN:\nFirst distinct question about alpha/);
+});
+
+test('the CLI prompt is printed only after queued commands are drained', () => {
+  const source = fs.readFileSync(indexFile, 'utf8');
+  const start = source.indexOf('async function processCommandLine');
+  const end = source.indexOf('rl.on("SIGINT"', start);
+  assert.ok(start >= 0 && end > start, 'processCommandLine should be present');
+  const body = source.slice(start, end);
+  const queueIndex = body.indexOf('if (queuedCommands.length > 0) {');
+  const promptIndex = body.indexOf('rl.prompt()');
+  assert.ok(queueIndex >= 0, 'queued draining should be present');
+  assert.ok(promptIndex > queueIndex, 'rl.prompt() must not run before the queue is drained');
+});
+
+test('cumulative AI time exceeding the old shared budget still succeeds per call', () => {
+  const { result } = runIsolatedJarvis(
+    { prospects: [], opportunities: [], offers: [], followUps: [], revenue: [] },
+    'Draft a proposal for the prospect\n',
+    {},
+    { fakeAIResponse: true, fakeAIDelayMs: 220, aiTimeoutMs: 300 }
+  );
+
+  assert.equal(result.status, 0, 'CLI should exit cleanly');
+  assert.match(result.stdout ?? '', /Running commercial evidence and delivery audit/);
+  assert.match(result.stdout ?? '', /GEMINI TEST RESPONSE/);
+  assert.doesNotMatch(result.stdout ?? '', /timed out/);
+});
+
+test('a successful search is followed by a grounded answer without a false timeout', () => {
+  const { result } = runIsolatedJarvis(
+    { prospects: [], opportunities: [], offers: [], followUps: [], revenue: [] },
+    'Identify five real Durban bookkeeping practices with source URLs\n',
+    {},
+    {
+      fakeAIResponses: [
+        'RESEARCH_REQUEST: Durban bookkeeping practices directory',
+        'GROUNDED ANSWER citing https://example.com/test'
+      ],
+      fakeResearch: true,
+      fakeAIDelayMs: 220,
+      aiTimeoutMs: 300
+    }
+  );
+
+  assert.equal(result.status, 0, 'CLI should exit cleanly');
+  assert.match(result.stdout ?? '', /Live web research returned/);
+  assert.match(result.stdout ?? '', /GROUNDED ANSWER citing https:\/\/example\.com\/test/);
+  assert.doesNotMatch(result.stdout ?? '', /timed out/);
+});
+
+test('a provider call that exceeds its own timeout is still reported as timed out', () => {
+  const { result, capturedAIRequests } = runIsolatedJarvis(
+    { prospects: [], opportunities: [], offers: [], followUps: [], revenue: [] },
+    'What should we do next?\n',
+    {},
+    { fakeAIResponse: true, fakeAIDelayMs: 600, aiTimeoutMs: 200, captureAIRequests: true }
+  );
+
+  assert.match(result.stdout ?? '', /timed out/);
+  assert.equal(capturedAIRequests.length, 1, 'no retry: exactly one provider call attempted');
+});
+
+test('the commercial audit runs with its own call budget after grounded research', () => {
+  const { result } = runIsolatedJarvis(
+    { prospects: [], opportunities: [], offers: [], followUps: [], revenue: [] },
+    'Draft a proposal for the prospect\n',
+    {},
+    {
+      fakeAIResponses: [
+        'RESEARCH_REQUEST: Durban bookkeeping practices directory',
+        'GROUNDED ANSWER',
+        'AUDITED ANSWER'
+      ],
+      fakeResearch: true,
+      fakeAIDelayMs: 220,
+      aiTimeoutMs: 300
+    }
+  );
+
+  assert.equal(result.status, 0, 'CLI should exit cleanly');
+  assert.match(result.stdout ?? '', /Live web research returned/);
+  assert.match(result.stdout ?? '', /Running commercial evidence and delivery audit/);
+  assert.match(result.stdout ?? '', /AUDITED ANSWER/);
+  assert.doesNotMatch(result.stdout ?? '', /timed out/);
+});
+
+test('a research flow performs exactly one research tool invocation', () => {
+  const { result, researchCalls } = runIsolatedJarvis(
+    { prospects: [], opportunities: [], offers: [], followUps: [], revenue: [] },
+    'Identify five real Durban bookkeeping practices with source URLs\n',
+    {},
+    {
+      fakeAIResponses: ['RESEARCH_REQUEST: Durban bookkeeping practices directory', 'GROUNDED ANSWER'],
+      fakeResearch: true
+    }
+  );
+
+  assert.equal(result.status, 0, 'CLI should exit cleanly');
+  assert.equal(researchCalls, 1, 'the research tool must be invoked exactly once');
+});
+
+test('stop during the grounded research stage cancels the answer and skips the audit', async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'jarvis-stop-grounded-'));
+  let child;
+  let killTimer;
+  try {
+    fs.copyFileSync(indexFile, path.join(tempDir, 'index.js'));
+    fs.writeFileSync(
+      path.join(tempDir, 'business.json'),
+      JSON.stringify({ prospects: [], opportunities: [], offers: [], followUps: [], revenue: [] })
+    );
+    fs.writeFileSync(path.join(tempDir, 'cofounder-settings.json'), JSON.stringify({ speechEnabled: false }));
+    fs.writeFileSync(
+      path.join(tempDir, 'mcporter.cmd'),
+      '@echo off\r\necho Title: Example Result\r\necho URL: https://example.com/test\r\n'
+    );
+    fs.writeFileSync(
+      path.join(tempDir, 'fake-fetch.cjs'),
+      [
+        'let __jarvisCall = 0;',
+        'const __jarvisResponses = ' + JSON.stringify(['RESEARCH_REQUEST: Durban directory', 'GROUNDED ANSWER']) + ';',
+        'const __jarvisDelay = 1500;',
+        'global.fetch = async function(url, options = {}) {',
+        '  __jarvisCall++;',
+        '  await new Promise((resolve, reject) => {',
+        '    const signal = options.signal;',
+        '    const t = setTimeout(resolve, __jarvisDelay);',
+        '    if (signal) signal.addEventListener("abort", () => { clearTimeout(t); reject(signal.reason || new Error("aborted")); }, { once: true });',
+        '  });',
+        '  const text = __jarvisResponses[Math.min(__jarvisCall - 1, __jarvisResponses.length - 1)];',
+        '  if (String(url).includes("/api/chat")) return { ok: true, status: 200, json: async () => ({ message: { content: text } }) };',
+        '  return { ok: true, status: 200, json: async () => ({ candidates: [{ content: { parts: [{ text }] } }] }) };',
+        '};',
+        ''
+      ].join('\n')
+    );
+
+    child = spawn(process.execPath, ['index.js'], {
+      cwd: tempDir,
+      env: {
+        ...process.env,
+        GEMINI_API_KEY: 'test-key',
+        COFOUNDER_PROVIDER: 'gemini',
+        PATH: tempDir + ';' + (process.env.PATH || ''),
+        COFOUNDER_AI_TIMEOUT_MS: '10000',
+        NODE_OPTIONS: (process.env.NODE_OPTIONS ? process.env.NODE_OPTIONS + ' ' : '') +
+          '--require=' + path.join(tempDir, 'fake-fetch.cjs').replace(/\\/g, '/')
+      }
+    });
+
+    let stdout = '';
+    let stopSent = false;
+    const finished = new Promise((resolve) => {
+      child.stdout.on('data', (chunk) => {
+        stdout += chunk.toString();
+        if (!stopSent && /Live web research returned/.test(stdout)) {
+          stopSent = true;
+          child.stdin.write('stop\n');
+          child.stdin.end();
+        }
+      });
+      child.on('close', resolve);
+    });
+    killTimer = setTimeout(() => { try { child.kill(); } catch (_) {} }, 15000);
+
+    child.stdin.write('Draft a proposal for the prospect\n');
+    await finished;
+
+    assert.match(stdout, /Live web research returned/, 'research should have completed');
+    assert.match(stdout, /Request cancelled by Zayn/, 'the grounded stage should be cancelled');
+    assert.doesNotMatch(stdout, /GROUNDED ANSWER/, 'the grounded answer must not be delivered');
+    assert.doesNotMatch(stdout, /Running commercial evidence and delivery audit/, 'the audit must not run after cancellation');
+  } finally {
+    if (killTimer) clearTimeout(killTimer);
+    if (child && !child.killed) {
+      try { child.kill(); } catch (_) {}
+    }
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
 });

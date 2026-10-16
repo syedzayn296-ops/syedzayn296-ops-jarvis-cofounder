@@ -290,7 +290,7 @@ function webResearch(query) {
             "objective=Find reliable current information relevant to the query. Return useful facts and sources for Cofounder research only."
         ];
 
-        exec("cmd.exe " + args.map(arg => `"${arg.replace(/"/g, '""')}"`).join(" "), (error, stdout, stderr) => {
+        exec("cmd.exe " + args.map(arg => `"${arg.replace(/"/g, '""')}"`).join(" "), { timeout: 45000 }, (error, stdout, stderr) => {
             if (error) {
                 reject(new Error(stderr || error.message));
                 return;
@@ -2275,7 +2275,9 @@ function buildCofounderMessage(prompt) {
         "You are Cofounder, Zayzana Tech's strategic AI partner in South Africa.",
         "Use the company context and conversation history below.",
         "Answer the user's actual latest request first. Do not redirect ordinary questions to business priorities or treat unrelated questions as distractions.",
-        "For live information such as weather, use an available tool when one exists. If no live-data tool is available, say so briefly and honestly; do not pretend to have checked it.",
+        "OPTIONAL LOCAL STATE: business.json, cofounder-state.json and memory.json are optional local files. Missing, empty or unreadable files, and empty prospect records, are normal. They must never be a reason to refuse, delay, water down or redirect a general, strategic, planning or public-research task, and you must not ask Zayn to repair local files before answering an unrelated request.",
+        "When Zayn gives a clear instruction, carry it out and produce the requested deliverable. Do not answer with only a plan, an advisory-board review, or a request for permission that Zayn has already given; ask a question only when a genuinely missing fact blocks a correct answer.",
+        "LIVE RESEARCH: You cannot browse the web inside this message. Never present model knowledge as live, verified or freshly researched, and never invent sources, URLs, businesses or contact details. If a task needs current public information such as real businesses, prices, news or websites, reply with exactly one line and nothing else: RESEARCH_REQUEST: <a specific search query>. The system will run a real web search and return the results for you to answer from. Do not use RESEARCH_REQUEST for questions you can already answer from the context above.",
         "Only bring up sales goals or pipeline follow-ups when relevant to the user's request or when the user asks for business priorities.",
         "Answer follow-up questions using earlier turns. Do not ask the user to repeat facts already supplied.",
         "Distinguish verified facts from assumptions and unknowns. Never invent capabilities, prospects, revenue, pricing evidence, or completed actions.",
@@ -2378,7 +2380,7 @@ function needsCommercialDeliverableAudit(prompt) {
     return asksForArtifact && namesCommercialArtifact;
 }
 
-function buildCommercialDeliverableAuditMessage(originalPrompt, draft) {
+function buildCommercialDeliverableAuditMessage(originalPrompt, draft, baseMessage) {
     return [
         "You are Cofounder's independent commercial evidence and delivery reviewer.",
         "Review the draft against the user request and the company/local-record context below. The first model pass is not evidence.",
@@ -2393,13 +2395,36 @@ function buildCommercialDeliverableAuditMessage(originalPrompt, draft) {
         "7. Keep external actions unexecuted; provide drafts only. Finish with one recommendation and one next action.",
         "",
         "CONVERSATION AND COMPANY CONTEXT (including relevant prior turns):",
-        buildCofounderMessage(originalPrompt),
+        baseMessage,
         "",
         "ORIGINAL USER REQUEST:",
         String(originalPrompt),
         "",
         "DRAFT TO AUDIT AND CORRECT:",
         String(draft)
+    ].join("\n");
+}
+
+function extractResearchRequest(response) {
+    const text = String(response || "").trim();
+    if (!/^RESEARCH_REQUEST\s*:/i.test(text)) return null;
+    const firstLine = text.split(/\r?\n/)[0];
+    const query = firstLine.replace(/^RESEARCH_REQUEST\s*:/i, "").trim();
+    return query || null;
+}
+
+function buildResearchGroundedMessage(baseMessage, query, result, errorMessage) {
+    return [
+        baseMessage,
+        "",
+        "LIVE WEB RESEARCH RESULTS (a real web search was executed just now; treat this as external, unverified evidence, not confirmed prospect fact):",
+        "SEARCH QUERY: " + query,
+        result ? String(result) : "[The live web search tool failed: " + errorMessage + "]",
+        "",
+        "Answer Zayn's original request now, using the live search results above as the only source for external facts.",
+        "Cite the source URLs that appear in the results. Do not add facts, businesses, contacts or URLs that are not present in the results.",
+        "If the results are insufficient, or the search failed, state exactly what is missing instead of inventing it.",
+        "Do not output another RESEARCH_REQUEST line."
     ].join("\n");
 }
 
@@ -2411,40 +2436,87 @@ async function askCofounderAI(prompt) {
     }
     activeRequestCancelled = false;
     activeAiRequest = true;
-    const controller = new AbortController();
-    activeAiController = controller;
     const timeoutMs = Number(process.env.COFOUNDER_AI_TIMEOUT_MS) || 45000;
-    const timer = setTimeout(() => {
-        if (!controller.signal.aborted) {
-            controller.abort(new Error(provider + " request timed out after " + timeoutMs + "ms."));
+
+    // Every provider call gets its own bounded timeout. A single timer shared
+    // across the whole workflow could expire during the separately bounded
+    // research step (or across cumulative stages) and abort a grounded answer
+    // even after a successful search. Each stage still runs at most once, so no
+    // retries or repeated searches are introduced.
+    async function callProvider(providerMessage) {
+        const controller = new AbortController();
+        activeAiController = controller;
+        const timer = setTimeout(() => {
+            if (!controller.signal.aborted) {
+                controller.abort(new Error(provider + " request timed out after " + timeoutMs + "ms."));
+            }
+        }, timeoutMs);
+        try {
+            return provider === "ollama"
+                ? await requestOllama(providerMessage, controller.signal)
+                : await requestGemini(providerMessage, controller.signal);
+        } catch (error) {
+            if (controller.signal.aborted && controller.signal.reason instanceof Error) {
+                throw controller.signal.reason;
+            }
+            throw error;
+        } finally {
+            clearTimeout(timer);
+            if (activeAiController === controller) activeAiController = null;
         }
-    }, timeoutMs);
+    }
+
     try {
-        let response = provider === "ollama"
-            ? await requestOllama(message, controller.signal)
-            : await requestGemini(message, controller.signal);
+        let response = await callProvider(message);
         if (activeRequestCancelled) throw new Error("Request cancelled by Zayn.");
+
+        // Bounded, single live-research round. The model may request one real
+        // web search; it is executed once through the existing research tool
+        // (never retried automatically), and the answer is then grounded on the
+        // returned sources. If the tool is unavailable the failure is reported,
+        // never invented.
+        const researchQuery = extractResearchRequest(response);
+        if (researchQuery) {
+            console.log("COFOUNDER > Live web research requested. Running the existing research tool...");
+            let researchResult = null;
+            let researchError = null;
+            try {
+                researchResult = await webResearch(researchQuery);
+            } catch (error) {
+                researchError = error && error.message ? error.message : String(error);
+            }
+            if (activeRequestCancelled) throw new Error("Request cancelled by Zayn.");
+            if (researchResult) {
+                // Results are used only for this response. They are deliberately
+                // NOT persisted: writing research evidence would modify the
+                // protected user-data file cofounder-state.json.
+                console.log("COFOUNDER > Live web research returned. Grounding the answer on the real results.");
+            } else {
+                console.log("COFOUNDER > Live web research failed: " + researchError);
+            }
+            const groundedMessage = buildResearchGroundedMessage(message, researchQuery, researchResult, researchError);
+            response = await callProvider(groundedMessage);
+            if (activeRequestCancelled) throw new Error("Request cancelled by Zayn.");
+        }
 
         if (needsCommercialDeliverableAudit(prompt)) {
             console.log("COFOUNDER > Running commercial evidence and delivery audit...");
-            const auditMessage = buildCommercialDeliverableAuditMessage(prompt, response);
-            response = provider === "ollama"
-                ? await requestOllama(auditMessage, controller.signal)
-                : await requestGemini(auditMessage, controller.signal);
+            const auditMessage = buildCommercialDeliverableAuditMessage(prompt, response, message);
+            response = await callProvider(auditMessage);
             if (activeRequestCancelled) throw new Error("Request cancelled by Zayn.");
+        }
+
+        // Never leak the internal research protocol to the user.
+        if (/^\s*RESEARCH_REQUEST\s*:/i.test(response)) {
+            response = "I could not complete that live web research request, so I will not guess. Try the explicit command: research <query>";
         }
 
         recordConversationTurn(prompt, response);
         return response;
     } catch (error) {
         if (activeRequestCancelled) throw new Error("Request cancelled by Zayn.");
-        if (controller.signal.aborted && controller.signal.reason instanceof Error) {
-            throw controller.signal.reason;
-        }
         throw error;
     } finally {
-        clearTimeout(timer);
-        if (activeAiController === controller) activeAiController = null;
         activeAiRequest = false;
     }
 }
@@ -4726,13 +4798,21 @@ async function processCommandLine(line) {
         const spokenResponse = responseLines
             .filter(text => !/COFOUNDER > Thinking\.\.\./i.test(text))
             .join(". ");
-        if (spokenResponse.trim() && !shuttingDown) await speakText(spokenResponse);
-        commandBusy = false;
-        if (!rl.closed) rl.prompt();
-
+        // Speak in the background so the prompt is available as soon as the
+        // response is displayed. speakText() serialises playback through
+        // speechQueue, so freeing the prompt cannot cause overlapping speech.
+        if (spokenResponse.trim() && !shuttingDown) {
+            speakText(spokenResponse).catch(() => {});
+        }
+        // Drain queued input before returning to the prompt. Printing the prompt
+        // while a queued command is still pending made the same prompt appear
+        // repeatedly between fragment outputs, so only prompt once the app is idle.
         if (queuedCommands.length > 0) {
             const nextLine = queuedCommands.shift();
             setImmediate(() => processCommandLine(nextLine));
+        } else {
+            commandBusy = false;
+            if (!rl.closed) rl.prompt();
         }
     }
 }
@@ -4793,9 +4873,20 @@ rl.on("line", (line) => {
 
     const isStopCommand = normalized === "stop" || normalized === "cancel" || normalized === "abort";
 
-    // A stop command bypasses the queue only while an AI provider is running.
-    if (isStopCommand && activeAiRequest) {
-        handleCommand(line);
+    // Stop commands are handled locally: they stop speech playback (safe; the
+    // session stays open) and cancel any in-flight AI request. They must never
+    // fall through to the AI provider.
+    if (isStopCommand) {
+        stopSpeech();
+        if (activeAiRequest) {
+            handleCommand(line);
+            return;
+        }
+        if (!commandBusy) {
+            console.log("COFOUNDER > No AI request is currently running.");
+            console.log("COFOUNDER > Speech stopped. Cofounder is still running.");
+            if (!rl.closed) rl.prompt();
+        }
         return;
     }
 
