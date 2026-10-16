@@ -1479,6 +1479,14 @@ function showProspectIntelligence() {
         recommendationBlockers.push("Desired outcome is not recorded.");
     }
 
+    if (!discovery.currentSolution) {
+        recommendationBlockers.push("Current solution is not recorded.");
+    }
+
+    if (!discovery.decisionMaker) {
+        recommendationBlockers.push("Decision maker is not recorded.");
+    }
+
     if (fitStatus !== "FIT") {
         recommendationBlockers.push("No confirmed Zayzana capability fit.");
     }
@@ -2490,6 +2498,7 @@ function showDailyBriefing() {
         const missing = [
             ["problem", "the confirmed business problem"],
             ["impact", "the impact of the problem"],
+            ["currentSolution", "the current solution"],
             ["desiredOutcome", "the desired measurable outcome"],
             ["decisionMaker", "the decision maker"],
             ["budget", "the budget or spending range"],
@@ -3626,6 +3635,17 @@ if (lower === "heartbeat" || lower === "cofounder heartbeat") {
     }
 
     d[field] = value;
+    active.currentDiscoveryField = "";
+
+    if (active.qualification) {
+        active.qualification = {
+            status: "NEEDS RECONFIRMATION",
+            checkedAt: new Date().toISOString(),
+            missing: [],
+            note: "Discovery changed after qualification review; rerun qualification and reconfirm buyer evidence."
+        };
+    }
+
     fs.writeFileSync("business.json", JSON.stringify(business, null, 2));
 
     console.log("DISCOVERY CAPTURED");
@@ -3633,6 +3653,9 @@ if (lower === "heartbeat" || lower === "cofounder heartbeat") {
     console.log(label + ": " + value);
     console.log("");
     console.log("Next step: run 'next discovery'.");
+    if (active.qualification?.status === "NEEDS RECONFIRMATION") {
+        console.log("Qualification invalidated because discovery changed. Rerun prospect qualification.");
+    }
     console.log("");
     return;
 }
@@ -3656,6 +3679,15 @@ if (input.startsWith("discovery impact ")) {
     active.discovery = active.discovery || {};
     active.discovery.impact = value;
 
+    if (active.qualification) {
+        active.qualification = {
+            status: "NEEDS RECONFIRMATION",
+            checkedAt: new Date().toISOString(),
+            missing: [],
+            note: "Discovery changed after qualification review; rerun qualification and reconfirm buyer evidence."
+        };
+    }
+
     fs.writeFileSync("business.json", JSON.stringify(business, null, 2));
 
     console.log("");
@@ -3664,6 +3696,9 @@ if (input.startsWith("discovery impact ")) {
     console.log("Impact: " + value);
     console.log("");
     console.log("Next step: run 'next discovery'.");
+    if (active.qualification?.status === "NEEDS RECONFIRMATION") {
+        console.log("Qualification invalidated because discovery changed. Rerun prospect qualification.");
+    }
     console.log("");
     return;
 }
@@ -4827,6 +4862,7 @@ const commercialBrain = {
             console.log("-------------------");
             console.log("Problem: " + (discovery.problem || "Not recorded"));
             console.log("Impact: " + (discovery.impact || "Not recorded"));
+            console.log("Current solution: " + (discovery.currentSolution || "Not recorded"));
             console.log("Desired outcome: " + (discovery.desiredOutcome || "Not recorded"));
             console.log("Decision maker: " + (discovery.decisionMaker || "Not recorded"));
             console.log("Budget: " + (discovery.budget || "Not recorded"));
@@ -4839,6 +4875,7 @@ const commercialBrain = {
 
             if (!discovery.problem) gaps.push("business problem");
             if (!discovery.impact) gaps.push("business impact");
+            if (!discovery.currentSolution) gaps.push("current solution");
             if (!discovery.desiredOutcome) gaps.push("desired outcome");
             if (!discovery.decisionMaker) gaps.push("decision maker");
             if (!discovery.budget) gaps.push("budget");
@@ -4920,6 +4957,9 @@ if (activeProspect) {
     } else if (!d.impact) {
             active.currentDiscoveryField = "impact";
         commercialNextAction = "Ask how the problem affects time, cost, revenue, customers or staff capacity.";
+    } else if (!d.currentSolution) {
+            active.currentDiscoveryField = "currentSolution";
+        commercialNextAction = "Confirm how the prospect is handling this problem today.";
     } else if (!d.desiredOutcome) {
             active.currentDiscoveryField = "desiredOutcome";
         commercialNextAction = "Ask what measurable outcome the prospect wants instead.";
@@ -4960,6 +5000,9 @@ if (activeProspect) {
     } else if (!d.impact) {
             active.currentDiscoveryField = "impact";
         discoveryQuestion = "You mentioned that " + d.problem + ". Roughly how much time, cost, customer impact or staff capacity does this issue affect?";
+    } else if (!d.currentSolution) {
+            active.currentDiscoveryField = "currentSolution";
+        discoveryQuestion = "How are you handling this problem today?";
     } else if (!d.desiredOutcome) {
             active.currentDiscoveryField = "desiredOutcome";
         discoveryQuestion = "If we solved that problem, what specific result would you want to see instead?";
@@ -5174,6 +5217,7 @@ function commercialAssessment() {
     const hasImpact = Boolean(discovery.impact);
     const hasOutcome = Boolean(discovery.desiredOutcome);
     const hasDecisionMaker = Boolean(discovery.decisionMaker);
+    const hasCurrentSolution = Boolean(discovery.currentSolution);
     const hasBudget = Boolean(discovery.budget);
     const hasTimeline = Boolean(discovery.timeline);
     const hasStrategicFit = Boolean(discovery.strategicFit);
@@ -5181,13 +5225,14 @@ function commercialAssessment() {
     const coreEvidence = [
         hasProblem,
         hasImpact,
+        hasCurrentSolution,
         hasOutcome,
         hasDecisionMaker
     ].filter(Boolean).length;
 
     let evidenceStatus = "INSUFFICIENT";
 
-    if (coreEvidence === 4) {
+    if (coreEvidence === 5) {
         evidenceStatus = "STRONG";
     } else if (coreEvidence >= 2) {
         evidenceStatus = "PARTIAL";

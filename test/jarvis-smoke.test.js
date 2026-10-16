@@ -397,6 +397,19 @@ test('cofounder blocks execution when an approval has already been executed', ()
   assert.equal(state.executions.length, 1);
 });
 
+test('cofounder blocks execution when no approvals exist', () => {
+  const { result, state } = runIsolatedJarvis(
+    prospectFixture(),
+    'execute approved 1\n'
+  );
+
+  assert.equal(result.status, 0);
+  assert.match(result.stdout ?? '', /JARVIS EXECUTION GATE/);
+  assert.match(result.stdout ?? '', /Invalid approval number/);
+  assert.equal(state.approvals.length, 0);
+  assert.equal(state.executions.length, 0);
+});
+
 test('cofounder lets newer qualification evidence supersede an older qualification lesson', () => {
   const { result } = runIsolatedJarvis(
     {
@@ -555,6 +568,30 @@ test('commercial assessment requires recorded qualification before pursuit', () 
   assert.match(result.stdout ?? '', /External action: BLOCKED/);
 });
 
+test('commercial assessment does not pursue a qualified prospect when the current solution is missing', () => {
+  const fixture = prospectFixture({
+    problem: 'Manual customer follow-up is consuming staff time',
+    impact: 'Staff spend 10 hours per week chasing responses',
+    desiredOutcome: 'Automate routine follow-up and tracking',
+    decisionMaker: 'Operations manager',
+    budget: 'R15000',
+    timeline: 'Within 30 days',
+    strategicFit: 'AI automation matches Zayzana commercial focus'
+  });
+  fixture.prospects[0].qualification = {
+    status: 'QUALIFIED',
+    confirmedAt: '2026-10-11T00:00:00.000Z',
+    confirmationSource: 'ZAYN_CONFIRMED_BUYER_EVIDENCE'
+  };
+
+  const { result } = runIsolatedJarvis(fixture, 'commercial assessment\n');
+
+  assert.equal(result.status, 0);
+  assert.doesNotMatch(result.stdout ?? '', /EVIDENCE: STRONG/);
+  assert.doesNotMatch(result.stdout ?? '', /JUDGEMENT: PURSUE/);
+  assert.match(result.stdout ?? '', /External action: BLOCKED/);
+});
+
 test('editing discovery invalidates prior buyer confirmation', () => {
   const fixture = prospectFixture({
     problem: 'Original buyer-confirmed problem',
@@ -584,6 +621,126 @@ test('editing discovery invalidates prior buyer confirmation', () => {
   assert.match(result.stdout ?? '', /JUDGEMENT: INVESTIGATE/);
   assert.equal(business.prospects[0].qualification.status, 'NEEDS RECONFIRMATION');
   assert.equal(business.prospects[0].qualification.confirmationSource, undefined);
+});
+
+test('editing discovery impact invalidates prior buyer confirmation', () => {
+  const fixture = prospectFixture({
+    problem: 'Original buyer-confirmed problem',
+    impact: 'Staff lose 10 hours weekly',
+    currentSolution: 'Manual spreadsheet workflow',
+    desiredOutcome: 'Automate follow-up',
+    decisionMaker: 'Operations manager',
+    budget: 'R15000',
+    timeline: 'Within 30 days',
+    strategicFit: 'AI automation matches Zayzana commercial focus'
+  });
+  fixture.prospects[0].qualification = {
+    status: 'QUALIFIED',
+    checkedAt: '2026-10-11T00:00:00.000Z',
+    confirmedAt: '2026-10-11T00:00:00.000Z',
+    confirmationSource: 'ZAYN_CONFIRMED_BUYER_EVIDENCE',
+    missing: []
+  };
+
+  const { result, business } = runIsolatedJarvis(
+    fixture,
+    'discovery impact Staff now lose 20 hours weekly\ncommercial assessment\n'
+  );
+
+  assert.equal(result.status, 0);
+  assert.match(result.stdout ?? '', /Qualification invalidated because discovery changed/);
+  assert.match(result.stdout ?? '', /JUDGEMENT: INVESTIGATE/);
+  assert.equal(business.prospects[0].qualification.status, 'NEEDS RECONFIRMATION');
+  assert.equal(business.prospects[0].qualification.confirmationSource, undefined);
+});
+
+test('editing discovery current solution invalidates prior buyer confirmation', () => {
+  const fixture = prospectFixture({
+    problem: 'Original buyer-confirmed problem',
+    impact: 'Staff lose 10 hours weekly',
+    currentSolution: 'Manual spreadsheet workflow',
+    desiredOutcome: 'Automate follow-up',
+    decisionMaker: 'Operations manager',
+    budget: 'R15000',
+    timeline: 'Within 30 days',
+    strategicFit: 'AI automation matches Zayzana commercial focus'
+  });
+  fixture.prospects[0].qualification = {
+    status: 'QUALIFIED',
+    checkedAt: '2026-10-11T00:00:00.000Z',
+    confirmedAt: '2026-10-11T00:00:00.000Z',
+    confirmationSource: 'ZAYN_CONFIRMED_BUYER_EVIDENCE',
+    missing: []
+  };
+
+  const { result, business } = runIsolatedJarvis(
+    fixture,
+    'discovery current Revised current solution\ncommercial assessment\n'
+  );
+
+  assert.equal(result.status, 0);
+  assert.equal(business.prospects[0].discovery.currentSolution, 'Revised current solution');
+  assert.equal(business.prospects[0].discovery.desiredOutcome, 'Automate follow-up');
+  assert.match(result.stdout ?? '', /Qualification invalidated because discovery changed/);
+  assert.match(result.stdout ?? '', /JUDGEMENT: INVESTIGATE/);
+  assert.equal(business.prospects[0].qualification.status, 'NEEDS RECONFIRMATION');
+  assert.equal(business.prospects[0].qualification.confirmationSource, undefined);
+});
+
+test('capture discovery invalidates prior buyer confirmation', () => {
+  const fixture = prospectFixture({
+    problem: 'Original buyer-confirmed problem',
+    impact: 'Staff lose 10 hours weekly',
+    currentSolution: 'Manual spreadsheet workflow',
+    desiredOutcome: 'Automate follow-up',
+    decisionMaker: 'Operations manager',
+    budget: 'R15000',
+    timeline: 'Within 30 days',
+    strategicFit: 'AI automation matches Zayzana commercial focus'
+  });
+  fixture.prospects[0].qualification = {
+    status: 'QUALIFIED',
+    checkedAt: '2026-10-11T00:00:00.000Z',
+    confirmedAt: '2026-10-11T00:00:00.000Z',
+    confirmationSource: 'ZAYN_CONFIRMED_BUYER_EVIDENCE',
+    missing: []
+  };
+  fixture.prospects[0].currentDiscoveryField = 'problem';
+
+  const { result, business } = runIsolatedJarvis(
+    fixture,
+    'capture discovery Revised problem text\ncommercial assessment\n'
+  );
+
+  assert.equal(result.status, 0);
+  assert.equal(business.prospects[0].discovery.problem, 'Revised problem text');
+  assert.match(result.stdout ?? '', /Qualification invalidated because discovery changed/);
+  assert.match(result.stdout ?? '', /JUDGEMENT: INVESTIGATE/);
+  assert.equal(business.prospects[0].qualification.status, 'NEEDS RECONFIRMATION');
+  assert.equal(business.prospects[0].qualification.confirmationSource, undefined);
+});
+
+test('capture discovery advances to the next missing field instead of overwriting the previous answer', () => {
+  const fixture = prospectFixture({});
+
+  const { result, business } = runIsolatedJarvis(
+    fixture,
+    'next discovery\n' +
+    'capture discovery Manual follow-up is eating staff time\n' +
+    'capture discovery Staff lose 10 hours weekly\n'
+  );
+
+  assert.equal(result.status, 0);
+  assert.deepEqual(
+    {
+      problem: business.prospects[0].discovery.problem,
+      impact: business.prospects[0].discovery.impact
+    },
+    {
+      problem: 'Manual follow-up is eating staff time',
+      impact: 'Staff lose 10 hours weekly'
+    }
+  );
 });
 
 test('commercial assessment rejects a QUALIFIED status without buyer-confirmation provenance', () => {
@@ -810,6 +967,24 @@ test('research refuses to run when an explicitly named prospect cannot be unique
   assert.equal(state.research, undefined);
 });
 
+test('research command returns and records the fake research result without network access', {
+  skip: process.platform !== 'win32'
+}, () => {
+  const { result, state } = runIsolatedJarvis(
+    prospectFixture(),
+    'research find company website\n',
+    {},
+    { fakeResearch: true }
+  );
+
+  assert.equal(result.status, 0);
+  assert.match(result.stdout ?? '', /EXA RESEARCH RESULTS/);
+  assert.match(result.stdout ?? '', /Title: Example Result/);
+  assert.equal(state.research.length, 1);
+  assert.equal(state.research[0].prospectName, null);
+  assert.equal(state.research[0].query, 'find company website');
+});
+
 test('multiple open prospects require an explicit selection before recommendation', () => {
   const business = prospectFixture();
   business.prospects.push({
@@ -894,6 +1069,113 @@ test('commercial brain respects the explicitly selected prospect', () => {
   assert.match(result.stdout ?? '', /ACTIVE PROSPECT[\s\S]*Name: Second prospect/);
   assert.match(result.stdout ?? '', /Second prospect problem/);
   assert.doesNotMatch(result.stdout ?? '', /Name: Test prospect/);
+});
+
+test('commercial view displays the recorded current solution as evidence', () => {
+  const fixture = prospectFixture({
+    problem: 'Manual customer follow-up is consuming staff time',
+    impact: 'Staff lose 10 hours weekly',
+    currentSolution: 'Manual spreadsheet workflow',
+    desiredOutcome: 'Automate routine follow-up and reduce manual admin',
+    decisionMaker: 'Operations manager'
+  });
+
+  const { result } = runIsolatedJarvis(fixture, 'commercial\n');
+
+  assert.equal(result.status, 0);
+  assert.match(result.stdout ?? '', /Current solution: Manual spreadsheet workflow/);
+});
+
+test('commercial view reports the current solution as a gap when it is missing', () => {
+  const fixture = prospectFixture({
+    problem: 'Manual customer follow-up is consuming staff time',
+    impact: 'Staff lose 10 hours weekly',
+    desiredOutcome: 'Automate routine follow-up and reduce manual admin',
+    decisionMaker: 'Operations manager',
+    budget: 'R15000',
+    timeline: 'Within 30 days'
+  });
+
+  const { result } = runIsolatedJarvis(fixture, 'commercial\n');
+
+  assert.equal(result.status, 0);
+  assert.match(result.stdout ?? '', /1\. current solution/);
+  assert.doesNotMatch(result.stdout ?? '', /No major recorded commercial information gaps\./);
+});
+
+test('commercial guided discovery asks for the current solution before the desired outcome', () => {
+  const fixture = prospectFixture({
+    problem: 'Manual follow-up is eating staff time',
+    impact: 'Staff lose 10 hours weekly'
+  });
+
+  const { result, business } = runIsolatedJarvis(
+    fixture,
+    'commercial\ncapture discovery Automate follow-up and tracking\n'
+  );
+
+  assert.equal(result.status, 0);
+  assert.match(
+    result.stdout ?? '',
+    /How are you handling this problem today\?/,
+    'commercial should ask the current-solution question when currentSolution is missing'
+  );
+  assert.equal(
+    business.prospects[0].discovery.currentSolution,
+    'Automate follow-up and tracking',
+    'the current-solution answer must be stored in discovery.currentSolution'
+  );
+  assert.ok(
+    !business.prospects[0].discovery.desiredOutcome,
+    'the current-solution answer must not be stored in discovery.desiredOutcome'
+  );
+});
+
+test('prospect workspace does not mark a prospect ready when the current solution is missing', () => {
+  const fixture = prospectFixture({
+    problem: 'Manual customer follow-up is consuming staff time',
+    impact: 'Staff lose 10 hours weekly',
+    desiredOutcome: 'Automate routine follow-up and reduce manual admin',
+    decisionMaker: 'Operations manager'
+  });
+
+  const { result } = runIsolatedJarvis(fixture, 'prospect workspace\n');
+
+  assert.equal(result.status, 0);
+  assert.doesNotMatch(result.stdout ?? '', /READY FOR REVIEW/);
+  assert.match(result.stdout ?? '', /Current solution is not recorded\./);
+});
+
+test('prospect workspace does not mark a prospect ready when the decision maker is missing', () => {
+  const fixture = prospectFixture({
+    problem: 'Manual customer follow-up is consuming staff time',
+    impact: 'Staff lose 10 hours weekly',
+    currentSolution: 'Staff use spreadsheets and manual messages',
+    desiredOutcome: 'Automate routine follow-up and reduce manual admin'
+  });
+
+  const { result } = runIsolatedJarvis(fixture, 'prospect workspace\n');
+
+  assert.equal(result.status, 0);
+  assert.doesNotMatch(result.stdout ?? '', /READY FOR REVIEW/);
+  assert.match(result.stdout ?? '', /Decision maker is not recorded\./);
+});
+
+test('prospect workspace leaves business data unchanged', () => {
+  const fixture = prospectFixture({
+    problem: 'Manual customer follow-up is consuming staff time',
+    impact: 'Staff lose 10 hours weekly',
+    currentSolution: 'Staff use spreadsheets and manual messages',
+    desiredOutcome: 'Automate routine follow-up and reduce manual admin',
+    decisionMaker: 'Operations manager'
+  });
+  const before = JSON.stringify(fixture);
+
+  const { result, business } = runIsolatedJarvis(fixture, 'prospect workspace\n');
+
+  assert.equal(result.status, 0);
+  assert.match(result.stdout ?? '', /READY FOR REVIEW/);
+  assert.equal(JSON.stringify(business), before);
 });
 
 test('dashboard views respect the selected prospect instead of showing the first open prospect', () => {
@@ -1208,6 +1490,23 @@ test('daily briefing does not invent a prospect choice when several prospects ne
   assert.match(result.stdout ?? '', /Test prospect, Second prospect/);
   assert.match(result.stdout ?? '', /Several prospects have incomplete discovery/);
   assert.match(result.stdout ?? '', /contacting anyone/);
+});
+
+test('daily briefing flags a prospect that is missing only the current solution', () => {
+  const fixture = prospectFixture({
+    problem: 'Manual customer follow-up is consuming staff time',
+    impact: 'Staff lose 10 hours weekly',
+    desiredOutcome: 'Automate routine follow-up and reduce manual admin',
+    decisionMaker: 'Operations manager',
+    budget: 'R15000',
+    timeline: 'Within 30 days'
+  });
+
+  const { result } = runIsolatedJarvis(fixture, 'briefing\n');
+
+  assert.equal(result.status, 0);
+  assert.match(result.stdout ?? '', /Qualify Test prospect: capture the current solution\./);
+  assert.match(result.stdout ?? '', /1 required discovery field\(s\) still missing\./);
 });
 
 test('daily briefing gives a grounded first commercial action when the pipeline is empty', () => {
