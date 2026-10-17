@@ -3236,11 +3236,51 @@ if (lower === "heartbeat" || lower === "cofounder heartbeat") {
         const stateFile = "cofounder-state.json";
         const state = JSON.parse(fs.readFileSync(stateFile, "utf8"));
         const decisions = Array.isArray(state.decisions) ? state.decisions : [];
-        const decisionMatch = rawApproval.match(/\s+for decision\s+(\d+)$/i);
-        const approvalText = decisionMatch
-            ? rawApproval.slice(0, decisionMatch.index).trim()
-            : rawApproval;
-        const decisionNumber = decisionMatch ? parseInt(decisionMatch[1], 10) : null;
+
+        // DECISION LINKAGE MUST BE EXPLICIT AND UNAMBIGUOUS.
+        // A quoted action text is stored verbatim and is never truncated; only a trailing
+        // "for decision <number>" OUTSIDE the closing quote is treated as linkage.
+        // Unquoted text keeps the historical trailing-marker behaviour so existing commands
+        // keep working: a trailing "for decision <number>" is always read as linkage.
+        // The parser cannot tell that apart from literal trailing text, so unquoted action
+        // text that must keep the marker literally has to be wrapped in double quotes.
+        let approvalText;
+        let decisionNumber = null;
+
+        if (rawApproval.startsWith('"')) {
+            const closingQuote = rawApproval.indexOf('"', 1);
+
+            if (closingQuote === -1) {
+                console.log("");
+                console.log("JARVIS APPROVAL BLOCKED");
+                console.log("------------------------");
+                console.log("Unbalanced quotes. Close the quoted action text, then optionally add: for decision <number>");
+                return true;
+            }
+
+            approvalText = rawApproval.slice(1, closingQuote);
+            const linkageText = rawApproval.slice(closingQuote + 1).trim();
+
+            if (linkageText) {
+                const quotedLinkMatch = linkageText.match(/^for decision\s+(\d+)$/i);
+
+                if (!quotedLinkMatch) {
+                    console.log("");
+                    console.log("JARVIS APPROVAL BLOCKED");
+                    console.log("------------------------");
+                    console.log("Quoted action text may only be followed by: for decision <number>");
+                    return true;
+                }
+
+                decisionNumber = parseInt(quotedLinkMatch[1], 10);
+            }
+        } else {
+            const decisionMatch = rawApproval.match(/\s+for decision\s+(\d+)$/i);
+            approvalText = decisionMatch
+                ? rawApproval.slice(0, decisionMatch.index).trim()
+                : rawApproval;
+            decisionNumber = decisionMatch ? parseInt(decisionMatch[1], 10) : null;
+        }
 
         if (!approvalText) {
             console.log("");
@@ -3340,6 +3380,21 @@ if (lower === "heartbeat" || lower === "cofounder heartbeat") {
                 console.log("JARVIS EXECUTION BLOCKED");
                 console.log("--------------------------");
                 console.log("The approval's linked decision is no longer active.");
+                return true;
+            }
+        } else {
+            // An approval recorded before any decision existed carries no link.
+            // Once an active decision exists, execution must not bypass the decision gate.
+            const activeDecisions = Array.isArray(state.decisions)
+                ? state.decisions.filter(d => d.status === "ACTIVE")
+                : [];
+
+            if (activeDecisions.length > 0) {
+                console.log("");
+                console.log("JARVIS EXECUTION BLOCKED");
+                console.log("--------------------------");
+                console.log("This approval is not linked to a decision, and an active decision now exists.");
+                console.log("Record a new approval linked to: for decision <number>");
                 return true;
             }
         }

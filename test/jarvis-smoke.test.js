@@ -2606,3 +2606,392 @@ test('commercial figures leaves protected state unchanged and triggers no extern
   assert.doesNotMatch(result.stdout ?? '', /COFOUNDER > Thinking/);
   assert.doesNotMatch(result.stdout ?? '', /AI request failed/);
 });
+
+// DECISION INTEGRITY: unambiguous linkage, tamper-resistant execution, duplicate prevention.
+
+test('cofounder preserves a quoted action text byte-for-byte and links from outside the quotes', () => {
+  const { result, state } = runIsolatedJarvis(
+    prospectFixture(),
+    'record decision SIMULATED alpha decision\n' +
+      'record decision SIMULATED beta decision\n' +
+      'approve recommendation "SIMULATED keep the tail for decision 2" for decision 1\n'
+  );
+
+  assert.equal(result.status, 0);
+  assert.match(result.stdout ?? '', /JARVIS RECOMMENDATION APPROVED/);
+  assert.equal(state.approvals[0].action, 'SIMULATED keep the tail for decision 2');
+  assert.equal(state.approvals[0].decisionNumber, 1);
+  assert.equal(state.approvals[0].decisionId, 'decision-1');
+});
+
+test('cofounder treats the historical trailing marker as linkage without a warning', () => {
+  const { result, state } = runIsolatedJarvis(
+    prospectFixture(),
+    'record decision SIMULATED alpha decision\n' +
+      'record decision SIMULATED beta decision\n' +
+      'approve recommendation SIMULATED keep the tail for decision 2\n'
+  );
+
+  assert.equal(result.status, 0);
+  assert.equal(state.approvals[0].action, 'SIMULATED keep the tail');
+  assert.equal(state.approvals[0].decisionNumber, 2);
+  assert.equal(state.approvals[0].decisionId, 'decision-2');
+  assert.doesNotMatch(result.stdout ?? '', /was read as decision linkage, not action text/);
+  assert.doesNotMatch(result.stdout ?? '', /wrap the action text in double quotes/);
+});
+
+test('cofounder blocks a quoted approval that states no decision while a decision is active', () => {
+  const { result, state } = runIsolatedJarvis(
+    prospectFixture(),
+    'record decision SIMULATED alpha decision\n' +
+      'approve recommendation "SIMULATED quoted no linkage"\n'
+  );
+
+  assert.equal(result.status, 0);
+  assert.match(result.stdout ?? '', /JARVIS APPROVAL BLOCKED/);
+  assert.match(result.stdout ?? '', /Link the approval to that decision/);
+  assert.equal(state.approvals.length, 0);
+});
+
+test('cofounder blocks quoted action text followed by anything other than decision linkage', () => {
+  const { result, state } = runIsolatedJarvis(
+    prospectFixture(),
+    'record decision SIMULATED alpha decision\n' +
+      'approve recommendation "SIMULATED quoted malformed" trailing garbage\n'
+  );
+
+  assert.equal(result.status, 0);
+  assert.match(result.stdout ?? '', /JARVIS APPROVAL BLOCKED/);
+  assert.match(result.stdout ?? '', /Quoted action text may only be followed by: for decision <number>/);
+  assert.equal(state.approvals.length, 0);
+});
+
+test('cofounder blocks an unbalanced quoted approval', () => {
+  const { result, state } = runIsolatedJarvis(
+    prospectFixture(),
+    'record decision SIMULATED alpha decision\n' +
+      'approve recommendation "SIMULATED unbalanced quote\n'
+  );
+
+  assert.equal(result.status, 0);
+  assert.match(result.stdout ?? '', /JARVIS APPROVAL BLOCKED/);
+  assert.match(result.stdout ?? '', /Unbalanced quotes/);
+  assert.equal(state.approvals.length, 0);
+});
+
+test('cofounder rejects a zero decision number', () => {
+  const { result, state } = runIsolatedJarvis(
+    prospectFixture(),
+    'record decision SIMULATED alpha decision\n' +
+      'approve recommendation SIMULATED zero probe for decision 0\n'
+  );
+
+  assert.equal(result.status, 0);
+  assert.match(result.stdout ?? '', /Invalid decision number\./);
+  assert.equal(state.approvals.length, 0);
+});
+
+test('cofounder rejects an out-of-range decision number', () => {
+  const { result, state } = runIsolatedJarvis(
+    prospectFixture(),
+    'record decision SIMULATED alpha decision\n' +
+      'approve recommendation SIMULATED range probe for decision 4\n'
+  );
+
+  assert.equal(result.status, 0);
+  assert.match(result.stdout ?? '', /Invalid decision number\./);
+  assert.equal(state.approvals.length, 0);
+});
+
+test('cofounder accepts a mixed-case decision marker', () => {
+  const { result, state } = runIsolatedJarvis(
+    prospectFixture(),
+    'record decision SIMULATED alpha decision\n' +
+      'approve recommendation SIMULATED case probe FOR DECISION 1\n'
+  );
+
+  assert.equal(result.status, 0);
+  assert.equal(state.approvals[0].action, 'SIMULATED case probe');
+  assert.equal(state.approvals[0].decisionId, 'decision-1');
+});
+
+test('cofounder does not treat a double-spaced marker as decision linkage', () => {
+  const { result, state } = runIsolatedJarvis(
+    prospectFixture(),
+    'record decision SIMULATED alpha decision\n' +
+      'approve recommendation SIMULATED spacing probe for  decision 1\n'
+  );
+
+  assert.equal(result.status, 0);
+  assert.match(result.stdout ?? '', /JARVIS APPROVAL BLOCKED/);
+  assert.equal(state.approvals.length, 0);
+});
+
+test('cofounder closes only the approvals linked to the closed decision', () => {
+  const { result, state } = runIsolatedJarvis(
+    prospectFixture(),
+    'record decision SIMULATED alpha decision\n' +
+      'record decision SIMULATED beta decision\n' +
+      'approve recommendation SIMULATED alpha action for decision 1\n' +
+      'approve recommendation SIMULATED beta action for decision 2\n' +
+      'close decision 1\n' +
+      'execute approved 1\n' +
+      'execute approved 2\n'
+  );
+
+  assert.equal(result.status, 0);
+  assert.equal(state.decisions[0].status, 'CLOSED');
+  assert.equal(state.decisions[1].status, 'ACTIVE');
+  assert.equal(state.approvals[0].decisionId, 'decision-1');
+  assert.equal(state.approvals[1].decisionId, 'decision-2');
+  assert.equal(state.approvals[0].status, 'STALE');
+  assert.equal(state.approvals[1].status, 'EXECUTED');
+  assert.equal(state.executions.length, 1);
+  assert.equal(state.executions[0].action, 'SIMULATED beta action');
+  assert.match(result.stdout ?? '', /Linked active approvals marked STALE/);
+  assert.match(result.stdout ?? '', /JARVIS EXECUTION BLOCKED/);
+});
+
+test('cofounder execution follows the stored decision, not free text in the action', () => {
+  const { result, state } = runIsolatedJarvis(
+    prospectFixture(),
+    'record decision SIMULATED alpha decision\n' +
+      'record decision SIMULATED beta decision\n' +
+      'record decision SIMULATED gamma decision\n' +
+      'approve recommendation SIMULATED review decision 3 item for decision 2\n' +
+      'close decision 3\n' +
+      'execute approved 1\n'
+  );
+
+  assert.equal(result.status, 0);
+  assert.equal(state.approvals[0].action, 'SIMULATED review decision 3 item');
+  assert.equal(state.approvals[0].decisionNumber, 2);
+  assert.equal(state.approvals[0].decisionId, 'decision-2');
+  assert.equal(state.approvals[0].status, 'EXECUTED');
+  assert.equal(state.executions.length, 1);
+  assert.doesNotMatch(result.stdout ?? '', /marked STALE/);
+});
+
+test('cofounder queue approval preserves follow-up text and uses the explicit decision', () => {
+  const { result, state } = runIsolatedJarvis(
+    prospectFixture(),
+    'record decision SIMULATED alpha decision\n' +
+      'record decision SIMULATED beta decision\n' +
+      'add follow-up SIMULATED reembed tail for decision 9\n' +
+      'approve action 1 for decision 2\n'
+  );
+
+  assert.equal(result.status, 0);
+  assert.equal(
+    state.approvals[0].action,
+    'Review and work the open follow-up(s): SIMULATED reembed tail for decision 9'
+  );
+  assert.equal(state.approvals[0].decisionNumber, 2);
+  assert.equal(state.approvals[0].decisionId, 'decision-2');
+  assert.doesNotMatch(result.stdout ?? '', /was read as decision linkage, not action text/);
+});
+
+test('cofounder blocks a repeat execution of an already executed approval', () => {
+  const { result, state } = runIsolatedJarvis(
+    prospectFixture(),
+    'execute approved 1\n',
+    {
+      decisions: [
+        { id: 'decision-1', decision: 'SIMULATED alpha decision', reason: 'Recorded by Zayn', evidence: [], date: '2026-01-01T00:00:00.000Z', status: 'ACTIVE' }
+      ],
+      approvals: [
+        { approvalId: 'approval-simulated', action: 'SIMULATED already executed', approvedBy: 'Zayn', date: '2026-01-01T00:00:00.000Z', status: 'EXECUTED', decisionNumber: 1, decisionId: 'decision-1' }
+      ],
+      executions: [
+        { approvalId: 'approval-simulated', action: 'SIMULATED already executed', approvedBy: 'Zayn', approvedDate: '2026-01-01T00:00:00.000Z', executedBy: 'JARVIS', executedDate: '2026-01-01T00:00:00.000Z', status: 'INTERNAL_ACTION_RECORDED', verificationStatus: 'PENDING' }
+      ]
+    }
+  );
+
+  assert.equal(result.status, 0);
+  assert.match(result.stdout ?? '', /JARVIS EXECUTION BLOCKED/);
+  assert.equal(state.approvals[0].status, 'EXECUTED');
+  assert.equal(state.executions.length, 1);
+});
+
+test('cofounder blocks execution of a stale approval whose decision was closed', () => {
+  const { result, state } = runIsolatedJarvis(
+    prospectFixture(),
+    'execute approved 1\n',
+    {
+      decisions: [
+        { id: 'decision-1', decision: 'SIMULATED alpha decision', reason: 'Recorded by Zayn', evidence: [], date: '2026-01-01T00:00:00.000Z', status: 'CLOSED' }
+      ],
+      approvals: [
+        { approvalId: 'approval-stale', action: 'SIMULATED stale action', approvedBy: 'Zayn', date: '2026-01-01T00:00:00.000Z', status: 'STALE', decisionNumber: 1, decisionId: 'decision-1' }
+      ]
+    }
+  );
+
+  assert.equal(result.status, 0);
+  assert.match(result.stdout ?? '', /JARVIS EXECUTION BLOCKED/);
+  assert.equal(state.executions.length, 0);
+});
+
+test('cofounder blocks execution when the stored decision index no longer resolves', () => {
+  const { result, state } = runIsolatedJarvis(
+    prospectFixture(),
+    'execute approved 1\n',
+    {
+      decisions: [],
+      approvals: [
+        { approvalId: 'approval-orphan', action: 'SIMULATED orphan action', approvedBy: 'Zayn', date: '2026-01-01T00:00:00.000Z', status: 'ACTIVE', decisionNumber: 3, decisionId: 'decision-3' }
+      ]
+    }
+  );
+
+  assert.equal(result.status, 0);
+  assert.match(result.stdout ?? '', /JARVIS EXECUTION BLOCKED/);
+  assert.equal(state.executions.length, 0);
+});
+
+// UNLINKED-APPROVAL SYMMETRY: an approval with no decision link must not bypass the
+// decision gate once an ACTIVE decision exists.
+
+test('cofounder blocks execution of an unlinked approval once an active decision exists', () => {
+  const { result, state } = runIsolatedJarvis(
+    prospectFixture(),
+    'approve recommendation SIMULATED unlinked probe\n' +
+      'record decision SIMULATED alpha decision\n' +
+      'execute approved 1\n'
+  );
+
+  assert.equal(result.status, 0);
+  assert.equal(state.approvals[0].decisionNumber, null);
+  assert.match(result.stdout ?? '', /JARVIS EXECUTION BLOCKED/);
+  assert.match(result.stdout ?? '', /not linked to a decision, and an active decision now exists/);
+  assert.equal(state.approvals[0].status, 'ACTIVE');
+  assert.equal(state.executions.length, 0);
+});
+
+test('cofounder still executes an unlinked approval when no decision exists', () => {
+  const { result, state } = runIsolatedJarvis(
+    prospectFixture(),
+    'approve recommendation SIMULATED unlinked probe\n' +
+      'execute approved 1\n'
+  );
+
+  assert.equal(result.status, 0);
+  assert.equal(state.approvals[0].decisionNumber, null);
+  assert.match(result.stdout ?? '', /JARVIS EXECUTION RECORDED/);
+  assert.equal(state.approvals[0].status, 'EXECUTED');
+  assert.equal(state.executions.length, 1);
+});
+
+test('cofounder blocks execution of a linked approval whose decision was closed', () => {
+  const { result, state } = runIsolatedJarvis(
+    prospectFixture(),
+    'record decision SIMULATED alpha decision\n' +
+      'approve recommendation SIMULATED linked probe for decision 1\n' +
+      'close decision 1\n' +
+      'execute approved 1\n'
+  );
+
+  assert.equal(result.status, 0);
+  assert.equal(state.decisions[0].status, 'CLOSED');
+  assert.equal(state.approvals[0].status, 'STALE');
+  assert.equal(state.approvals[0].staleReason, 'Linked decision was closed.');
+  assert.match(result.stdout ?? '', /JARVIS EXECUTION BLOCKED/);
+  assert.equal(state.executions.length, 0);
+});
+
+test('cofounder does not execute an approval against a different active decision', () => {
+  const { result, state } = runIsolatedJarvis(
+    prospectFixture(),
+    'record decision SIMULATED alpha decision\n' +
+      'record decision SIMULATED beta decision\n' +
+      'approve recommendation SIMULATED second decision action for decision 2\n' +
+      'close decision 2\n' +
+      'execute approved 1\n'
+  );
+
+  assert.equal(result.status, 0);
+  assert.equal(state.decisions[0].status, 'ACTIVE');
+  assert.equal(state.decisions[1].status, 'CLOSED');
+  assert.equal(state.approvals[0].decisionId, 'decision-2');
+  assert.match(result.stdout ?? '', /JARVIS EXECUTION BLOCKED/);
+  assert.equal(state.executions.length, 0);
+});
+
+// QUOTED-APPROVAL EDGE CASES AND LEGACY TRUNCATION NOTICES.
+
+test('cofounder blocks a quoted approval with empty action text', () => {
+  const { result, state } = runIsolatedJarvis(
+    prospectFixture(),
+    'record decision SIMULATED alpha decision\n' +
+      'approve recommendation "" for decision 1\n'
+  );
+
+  assert.equal(result.status, 0);
+  assert.match(result.stdout ?? '', /JARVIS APPROVAL/);
+  assert.match(result.stdout ?? '', /Use: approve recommendation <action>/);
+  assert.equal(state.approvals.length, 0);
+});
+
+test('cofounder blocks a quoted approval whose suffix omits the decision number', () => {
+  const { result, state } = runIsolatedJarvis(
+    prospectFixture(),
+    'record decision SIMULATED alpha decision\n' +
+      'approve recommendation "SIMULATED text" for decision\n'
+  );
+
+  assert.equal(result.status, 0);
+  assert.match(result.stdout ?? '', /JARVIS APPROVAL BLOCKED/);
+  assert.match(result.stdout ?? '', /Quoted action text may only be followed by: for decision <number>/);
+  assert.equal(state.approvals.length, 0);
+});
+
+test('cofounder rejects an out-of-range decision number in the quoted form', () => {
+  const { result, state } = runIsolatedJarvis(
+    prospectFixture(),
+    'record decision SIMULATED alpha decision\n' +
+      'approve recommendation "SIMULATED text" for decision 4\n'
+  );
+
+  assert.equal(result.status, 0);
+  assert.match(result.stdout ?? '', /JARVIS APPROVAL BLOCKED/);
+  assert.match(result.stdout ?? '', /Invalid decision number\./);
+  assert.equal(state.approvals.length, 0);
+});
+
+test('cofounder prints no truncation warning for the documented linkage form', () => {
+  const { result, state } = runIsolatedJarvis(
+    prospectFixture(),
+    'record decision SIMULATED alpha decision\n' +
+      'approve recommendation SIMULATED documented form for decision 1\n'
+  );
+
+  assert.equal(result.status, 0);
+  assert.equal(state.approvals[0].action, 'SIMULATED documented form');
+  assert.equal(state.approvals[0].decisionId, 'decision-1');
+  assert.doesNotMatch(result.stdout ?? '', /was read as decision linkage, not action text/);
+  assert.doesNotMatch(result.stdout ?? '', /wrap the action text in double quotes/);
+});
+
+test('cofounder cannot distinguish literal trailing text from linkage in unquoted input', () => {
+  const unquoted = runIsolatedJarvis(
+    prospectFixture(),
+    'record decision SIMULATED alpha decision\n' +
+      'approve recommendation SIMULATED literal for decision 1\n'
+  );
+
+  assert.equal(unquoted.result.status, 0);
+  assert.equal(unquoted.state.approvals[0].action, 'SIMULATED literal');
+  assert.equal(unquoted.state.approvals[0].decisionId, 'decision-1');
+  assert.doesNotMatch(unquoted.result.stdout ?? '', /was read as decision linkage, not action text/);
+
+  const quoted = runIsolatedJarvis(
+    prospectFixture(),
+    'record decision SIMULATED alpha decision\n' +
+      'approve recommendation "SIMULATED literal for decision 1" for decision 1\n'
+  );
+
+  assert.equal(quoted.result.status, 0);
+  assert.equal(quoted.state.approvals[0].action, 'SIMULATED literal for decision 1');
+  assert.equal(quoted.state.approvals[0].decisionId, 'decision-1');
+});
