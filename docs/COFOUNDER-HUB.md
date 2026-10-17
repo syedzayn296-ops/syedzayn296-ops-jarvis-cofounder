@@ -57,6 +57,7 @@ Cofounder is Zayzana Tech's AI operating partner, not a yes-man and not an auton
 
 - **Prospect qualification:** discovery being complete is not the same as a buyer confirming qualification. Explicit confirmation and its provenance must be recorded.
 - **Stale qualification:** if core discovery fields change, prior qualification must be invalidated.
+- **Research commands:** the direct research command requires an explicit `research:` delimiter. `research: <query>` runs a direct live search; `research: for <Prospect>: <query>` associates that search with one named open prospect; `research-latest` shows the last saved search; a bare `research` asks for a query. Ordinary messages go to the AI — a natural-language message that merely begins with the word "Research" is never treated as the command, so it cannot trigger an unintended live search or research record.
 - **Research association:** never attach general research automatically to the first open prospect. Use explicit prospect association when needed; reject unmatched or ambiguous names.
 - **Prospect selection:** if several prospects are open, ask for an exact selection rather than guessing. Do not rely on stale selected-prospect state.
 - **Recommendations:** incomplete discovery means no final solution recommendation; state the gap and ask the next useful question.
@@ -81,7 +82,7 @@ git diff --check
 git status --short
 ```
 
-The repository currently contains 51 smoke/regression test cases. GitHub Actions run #25 passed on `c1fd292`. Zayn's latest manual smoke test confirmed a live Gemini answer and immediate speech stop on Ctrl+C. Run the suite again after every code change; automated CI does not prove the local API key or private local data is correct.
+The repository currently contains 104 smoke/regression test cases. GitHub Actions run #25 passed on `c1fd292`. Zayn's latest manual smoke test confirmed a live Gemini answer and immediate speech stop on Ctrl+C. Run the suite again after every code change; automated CI does not prove the local API key or private local data is correct.
 
 ## 6. Commercial research and pipeline
 

@@ -944,7 +944,7 @@ test('action queue identifies the actual open follow-up', () => {
 
 test('research remains unassigned by default and only links to an explicitly named open prospect', () => {
   const source = fs.readFileSync(indexFile, 'utf8');
-  const start = source.indexOf('if (lower.startsWith("research "))');
+  const start = source.indexOf('if (lower.startsWith("research:"))');
   const end = source.indexOf('if (lower.startsWith("record decision "))', start);
 
   assert.ok(start >= 0 && end > start, 'research handler should be present');
@@ -961,7 +961,7 @@ test('research command stores unassigned research without borrowing the first op
 }, () => {
   const { result, state } = runIsolatedJarvis(
     prospectFixture(),
-    'research find company website\n',
+    'research: find company website\n',
     {},
     { fakeResearch: true }
   );
@@ -978,7 +978,7 @@ test('research command associates evidence only with the explicitly named open p
 }, () => {
   const { result, state } = runIsolatedJarvis(
     prospectFixture(),
-    'research for Test prospect: find company website\n',
+    'research: for Test prospect: find company website\n',
     {},
     { fakeResearch: true }
   );
@@ -998,7 +998,7 @@ test('research association trims accidental whitespace from prospect names', {
 
   const { result, state } = runIsolatedJarvis(
     business,
-    'research for Test prospect: find company website\n',
+    'research: for Test prospect: find company website\n',
     {},
     { fakeResearch: true }
   );
@@ -1014,7 +1014,7 @@ test('research refuses to run when an explicitly named prospect cannot be unique
 }, () => {
   const { result, state } = runIsolatedJarvis(
     prospectFixture(),
-    'research for Wrong prospect: find company website\n'
+    'research: for Wrong prospect: find company website\n'
   );
 
   assert.equal(result.status, 0);
@@ -1027,7 +1027,7 @@ test('research command returns and records the fake research result without netw
 }, () => {
   const { result, state } = runIsolatedJarvis(
     prospectFixture(),
-    'research find company website\n',
+    'research: find company website\n',
     {},
     { fakeResearch: true }
   );
@@ -1038,6 +1038,84 @@ test('research command returns and records the fake research result without netw
   assert.equal(state.research.length, 1);
   assert.equal(state.research[0].prospectName, null);
   assert.equal(state.research[0].query, 'find company website');
+});
+
+test('the explicit research: command runs research directly without reaching the AI', {
+  skip: process.platform !== 'win32'
+}, () => {
+  const { result, researchCalls } = runIsolatedJarvis(
+    prospectFixture(),
+    'research: find company website\n',
+    {},
+    { fakeResearch: true, fakeAIResponse: true }
+  );
+
+  assert.equal(result.status, 0, 'stdout: ' + result.stdout + '\nstderr: ' + result.stderr);
+  assert.match(result.stdout ?? '', /EXA RESEARCH RESULTS/);
+  assert.match(result.stdout ?? '', /Title: Example Result/);
+  assert.equal(researchCalls, 1, 'the direct command must invoke the research tool exactly once');
+  assert.doesNotMatch(result.stdout ?? '', /COFOUNDER > Thinking\.\.\./);
+});
+
+test('a bare research command asks for a query and runs nothing', {
+  skip: process.platform !== 'win32'
+}, () => {
+  const { result, researchCalls, state } = runIsolatedJarvis(
+    prospectFixture(),
+    'research\n',
+    {},
+    { fakeResearch: true, fakeAIResponse: true }
+  );
+
+  assert.equal(result.status, 0, 'stdout: ' + result.stdout + '\nstderr: ' + result.stderr);
+  assert.match(result.stdout ?? '', /Please provide a research query/);
+  assert.equal(researchCalls, 0, 'a bare command must not invoke the research tool');
+  assert.ok(!state.research, 'a bare command must not persist research');
+});
+
+test('an ordinary natural-language request beginning with the word Research reaches the AI', () => {
+  const { result, researchCalls, state } = runIsolatedJarvis(
+    { prospects: [], opportunities: [], offers: [], followUps: [], revenue: [] },
+    'Research current public guidance on South Africa POPIA.\n',
+    {},
+    { fakeAIResponse: true, fakeResearch: true }
+  );
+
+  assert.equal(result.status, 0, 'stdout: ' + result.stdout + '\nstderr: ' + result.stderr);
+  assert.match(result.stdout ?? '', /GEMINI TEST RESPONSE/);
+  assert.doesNotMatch(result.stdout ?? '', /JARVIS WEB RESEARCH/);
+  assert.doesNotMatch(result.stdout ?? '', /EXA RESEARCH RESULTS/);
+  assert.equal(researchCalls, 0, 'ordinary prose must not be executed as the direct research command');
+  assert.ok(!state.research, 'ordinary prose must not persist research');
+});
+
+test('a natural-language request beginning with Research for is not treated as prospect research', () => {
+  const { result, researchCalls, state } = runIsolatedJarvis(
+    { prospects: [], opportunities: [], offers: [], followUps: [], revenue: [] },
+    'Research for small business owners on POPIA compliance.\n',
+    {},
+    { fakeAIResponse: true, fakeResearch: true }
+  );
+
+  assert.equal(result.status, 0, 'stdout: ' + result.stdout + '\nstderr: ' + result.stderr);
+  assert.match(result.stdout ?? '', /GEMINI TEST RESPONSE/);
+  assert.doesNotMatch(result.stdout ?? '', /JARVIS WEB RESEARCH/);
+  assert.equal(researchCalls, 0, 'prose beginning "Research for" must not invoke the research tool');
+  assert.ok(!state.research, 'prose beginning "Research for" must not persist research');
+});
+
+test('capitalising the research word does not divert a natural-language request to the command', () => {
+  const { result, researchCalls } = runIsolatedJarvis(
+    { prospects: [], opportunities: [], offers: [], followUps: [], revenue: [] },
+    'Research find company website\n',
+    {},
+    { fakeAIResponse: true, fakeResearch: true }
+  );
+
+  assert.equal(result.status, 0, 'stdout: ' + result.stdout + '\nstderr: ' + result.stderr);
+  assert.match(result.stdout ?? '', /GEMINI TEST RESPONSE/);
+  assert.doesNotMatch(result.stdout ?? '', /JARVIS WEB RESEARCH/);
+  assert.equal(researchCalls, 0, 'case must not change routing');
 });
 
 test('multiple open prospects require an explicit selection before recommendation', () => {
@@ -1821,6 +1899,58 @@ test('a research request does not create protected user-data JSON files that are
   assert.equal(state, null);
   assert.equal(protectedFiles['cofounder-state.json'], null, 'an absent cofounder-state.json must not be created');
   assert.equal(protectedFiles['memory.json'], null, 'an absent memory.json must not be created');
+});
+
+test('a natural-language Research request grounds the answer with exactly one research call and no persistence', () => {
+  const { result, researchCalls, state } = runIsolatedJarvis(
+    { prospects: [], opportunities: [], offers: [], followUps: [], revenue: [] },
+    'Research current public guidance on South Africa POPIA.\n',
+    {},
+    {
+      fakeAIResponses: [
+        'RESEARCH_REQUEST: Durban KZN bookkeeping practices directory',
+        'GROUNDED ANSWER citing https://example.com/test'
+      ],
+      fakeResearch: true
+    }
+  );
+
+  assert.equal(result.status, 0, 'stdout: ' + result.stdout + '\nstderr: ' + result.stderr);
+  assert.match(result.stdout ?? '', /Live web research returned/);
+  assert.match(result.stdout ?? '', /GROUNDED ANSWER/);
+  assert.equal(researchCalls, 1, 'exactly one research tool invocation');
+  assert.ok(!state.research || state.research.length === 0, 'grounded research must not be persisted');
+});
+
+test('a natural-language Research request leaves protected user-data files byte-identical', () => {
+  const seeds = {
+    'business.json': JSON.stringify({ prospects: [], opportunities: [], offers: [], followUps: [], revenue: [], marker: 'business-untouched' }, null, 2),
+    'cofounder-state.json': JSON.stringify({ goals: [], decisions: [], approvals: [], executions: [], lessons: [], research: [], marker: 'state-untouched' }, null, 2),
+    'memory.json': JSON.stringify([{ text: 'keep me', marker: 'memory-untouched' }], null, 2),
+    'reminders.json': JSON.stringify([{ message: 'keep', time: 9999999999999, marker: 'reminders-untouched' }], null, 2),
+    'tasks.json': JSON.stringify([{ text: 'keep', marker: 'tasks-untouched' }], null, 2),
+    'cofounder-settings.json': JSON.stringify({ speechEnabled: false }, null, 2)
+  };
+  const { result, researchCalls, protectedFiles } = runIsolatedJarvis(
+    null,
+    'Research current public guidance on South Africa POPIA.\n',
+    {},
+    {
+      fakeAIResponses: [
+        'RESEARCH_REQUEST: Durban KZN bookkeeping practices directory',
+        'GROUNDED ANSWER citing https://example.com/test'
+      ],
+      fakeResearch: true,
+      seedProtectedFiles: seeds
+    }
+  );
+
+  assert.equal(result.status, 0, 'stdout: ' + result.stdout + '\nstderr: ' + result.stderr);
+  assert.match(result.stdout ?? '', /GROUNDED ANSWER/);
+  assert.equal(researchCalls, 1, 'exactly one research tool invocation');
+  for (const [name, expected] of Object.entries(seeds)) {
+    assert.equal(protectedFiles[name], expected, name + ' must remain byte-identical after a natural-language research request');
+  }
 });
 
 test('a failed live search is reported honestly instead of inventing sources', () => {

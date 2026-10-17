@@ -2508,7 +2508,7 @@ async function askCofounderAI(prompt) {
 
         // Never leak the internal research protocol to the user.
         if (/^\s*RESEARCH_REQUEST\s*:/i.test(response)) {
-            response = "I could not complete that live web research request, so I will not guess. Try the explicit command: research <query>";
+            response = "I could not complete that live web research request, so I will not guess. Try the explicit command: research: <query>";
         }
 
         recordConversationTurn(prompt, response);
@@ -2892,18 +2892,23 @@ if (lower === "heartbeat" || lower === "cofounder heartbeat") {
         return;
     }
 
-    if (lower.startsWith("research ")) {
-        let query = trimmed.slice("research ".length).trim();
+    if (lower === "research") {
+        console.log("JARVIS > Please provide a research query.");
+        return;
+    }
+
+    if (lower.startsWith("research:")) {
+        let query = trimmed.slice("research:".length).trim();
         let researchProspectName = null;
 
-        // Optional explicit association: research for Prospect Name: search query
+        // Optional explicit association: research: for Prospect Name: search query
         if (query.toLowerCase().startsWith("for ") && query.includes(":")) {
             const separator = query.indexOf(":");
             const requestedProspectName = query.slice(4, separator).trim();
             query = query.slice(separator + 1).trim();
 
             if (!requestedProspectName || !query) {
-                console.log("Usage: research for Prospect Name: research query");
+                console.log("Usage: research: for Prospect Name: research query");
                 return;
             }
 
@@ -2932,7 +2937,7 @@ if (lower === "heartbeat" || lower === "cofounder heartbeat") {
         console.log("------------------");
         console.log("Query: " + query);
         console.log("Prospect: " + (researchProspectName || "Unassigned"));
-        console.log('Use "research for Prospect Name: query" to associate research deliberately.');
+        console.log('Use "research: for Prospect Name: query" to associate research deliberately.');
         console.log("Research only. No external action will be taken.");
 
         webResearch(query)
