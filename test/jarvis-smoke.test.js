@@ -2995,3 +2995,328 @@ test('cofounder cannot distinguish literal trailing text from linkage in unquote
   assert.equal(quoted.state.approvals[0].action, 'SIMULATED literal for decision 1');
   assert.equal(quoted.state.approvals[0].decisionId, 'decision-1');
 });
+
+// --------------------------------------------------
+// openWebsite launch-failure handling
+// --------------------------------------------------
+// The browser command is `start "" "<url>"`. These tests install a child-process double
+// BEFORE the application starts (NODE_OPTIONS=--require), so no shell and no browser can
+// be launched. The double is faithful to the two contracts Node's exec() can have:
+//   * if production exec() passed a callback, the double invokes it asynchronously with a
+//     synthetic Error, using the same ordering Node uses for a launch failure;
+//   * if production passed NO callback, the double emits 'error' on the returned fake
+//     ChildProcess, which is exactly how Node surfaces a failed launch - with no listener
+//     attached that event terminates the process with an unhandled 'error'.
+// Fail-closed guards:
+//   * the double writes a ready-handshake file when it loads, and this helper throws if the
+//     handshake is missing, so a preload that failed to install can never look like a pass;
+//   * a probe subprocess confirms the patch is live before the application is started;
+//   * ComSpec is pointed at a non-existent path, so even if interception ever leaked, exec()
+//     could not find a shell and no real `start` command or browser could run.
+function stripOpenWebsiteErrorCallback(source) {
+  const marker = 'exec(`start "" "${url}"`, error => {';
+  const first = source.indexOf(marker);
+  if (first === -1) {
+    throw new Error('openWebsite error-callback marker not found in index.js');
+  }
+  if (source.indexOf(marker, first + marker.length) !== -1) {
+    throw new Error('openWebsite error-callback marker is not unique in index.js');
+  }
+  const closeToken = '\n    });';
+  const closeAt = source.indexOf(closeToken, first);
+  if (closeAt === -1) {
+    throw new Error('openWebsite error-callback terminator not found in index.js');
+  }
+  return source.slice(0, first) + 'exec(`start "" "${url}"`);' + source.slice(closeAt + closeToken.length);
+}
+
+function runOpenWebsiteScenario(input, outcome, options = {}) {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'jarvis-openwebsite-'));
+  try {
+    const productionSource = fs.readFileSync(indexFile, 'utf8');
+    fs.writeFileSync(
+      path.join(tempDir, 'index.js'),
+      options.stripOpenWebsiteErrorCallback === true
+        ? stripOpenWebsiteErrorCallback(productionSource)
+        : productionSource
+    );
+    fs.writeFileSync(
+      path.join(tempDir, 'cofounder-settings.json'),
+      JSON.stringify({ speechEnabled: false }, null, 2)
+    );
+    fs.writeFileSync(
+      path.join(tempDir, 'double-exec.cjs'),
+      [
+        'const fs = require("fs");',
+        'const cp = require("child_process");',
+        'const LOG = process.env.DOUBLE_LOG;',
+        'const READY = process.env.DOUBLE_READY;',
+        'const OUTCOME = process.env.DOUBLE_EXEC_OUTCOME || "success";',
+        'function log(entry) { if (!LOG) return; try { fs.appendFileSync(LOG, JSON.stringify(Object.assign({ at: new Date().toISOString(), forwardedToRealService: false }, entry)) + "\\n"); } catch (_) {} }',
+        'try { fs.writeFileSync(READY, "installed\\n"); } catch (_) {}',
+        'log({ boundary: "double.load", category: "interception", outcome: "INSTALLED" });',
+        'function classify(command) {',
+        '  const c = String(command || "");',
+        '  if (/mcporter/i.test(c)) return "research-child-process";',
+        '  if (/taskkill/i.test(c)) return "speech-cleanup-child-process";',
+        '  if (/^\\s*start\\s+""/i.test(c) || /https?:\\/\\//i.test(c)) return "website-open-child-process";',
+        '  return "child-process-other";',
+        '}',
+        'function fakeChild() {',
+        '  const { EventEmitter } = require("events");',
+        '  const child = new EventEmitter();',
+        '  child.pid = 900000;',
+        '  child.stdout = new EventEmitter();',
+        '  child.stderr = new EventEmitter();',
+        '  child.kill = function () { log({ boundary: "child_process.ChildProcess.kill", category: "child-process-kill", outcome: "INTERCEPTED_NO_KILL" }); return true; };',
+        '  return child;',
+        '}',
+        'cp.exec = function (command, options, callback) {',
+        '  const cb = typeof options === "function" ? options : callback;',
+        '  const callbackProvided = typeof cb === "function";',
+        '  const category = classify(command);',
+        '  log({ boundary: "child_process.exec", category: category, outcome: "INTERCEPTED_NOT_EXECUTED", callbackProvided: callbackProvided, command: String(command).slice(0, 200) });',
+        '  const child = fakeChild();',
+        '  if (OUTCOME === "hang") return child;',
+        '  if (OUTCOME === "fail" || OUTCOME === "launch-error") {',
+        '    setImmediate(function () {',
+        '      const error = new Error("simulated launch failure: start");',
+        '      if (callbackProvided) {',
+        '        log({ boundary: "child_process.exec.delivery", launchCategory: category, outcome: "CALLBACK_ERROR_DELIVERED", callbackProvided: true });',
+        '        cb(error);',
+        '      } else {',
+        '        log({ boundary: "child_process.exec.delivery", launchCategory: category, outcome: "ERROR_EVENT_EMITTED", callbackProvided: false });',
+        '        child.emit("error", error);',
+        '      }',
+        '    });',
+        '    return child;',
+        '  }',
+        '  setImmediate(function () { if (callbackProvided) cb(null, "", ""); else child.emit("close", 0); });',
+        '  return child;',
+        '};',
+        'cp.execSync = function (file) { log({ boundary: "child_process.execSync", category: classify(file), outcome: "INTERCEPTED_NOT_EXECUTED" }); return ""; };',
+        'cp.execFileSync = function (file) { log({ boundary: "child_process.execFileSync", category: classify(file), outcome: "INTERCEPTED_NOT_EXECUTED" }); return ""; };',
+        'cp.execFile = function (file, args, options, callback) { const cb = typeof options === "function" ? options : (typeof args === "function" ? args : callback); log({ boundary: "child_process.execFile", category: classify(file), outcome: "INTERCEPTED_NOT_EXECUTED" }); if (typeof cb === "function") setImmediate(function () { cb(null, "", ""); }); return fakeChild(); };',
+        'cp.spawn = function (file) { log({ boundary: "child_process.spawn", category: /powershell/i.test(String(file)) ? "speech-process-spawn" : classify(file), outcome: "INTERCEPTED_NOT_SPAWNED" }); return fakeChild(); };',
+        'cp.spawnSync = function (file) { log({ boundary: "child_process.spawnSync", category: classify(file), outcome: "INTERCEPTED_NOT_SPAWNED" }); return { status: 0, stdout: "", stderr: "", pid: 900000, output: [null, "", ""], signal: null }; };',
+        ''
+      ].join('\n')
+    );
+
+    const logFile = path.join(tempDir, 'double-log.jsonl');
+    const readyFile = path.join(tempDir, 'double-ready.txt');
+    const probeReadyFile = path.join(tempDir, 'double-ready-probe.txt');
+    const probeLogFile = path.join(tempDir, 'double-probe-log.jsonl');
+    const preload = path.join(tempDir, 'double-exec.cjs').replace(/\\/g, '/');
+    const doubleEnv = {
+      ...process.env,
+      GEMINI_API_KEY: '',
+      // Fail-closed: if the double ever failed to install, exec() could not locate a shell,
+      // so no real `start` command and no browser could be launched.
+      ComSpec: path.join(tempDir, 'no-shell-here.cmd'),
+      DOUBLE_LOG: logFile,
+      DOUBLE_EXEC_OUTCOME: outcome,
+      DOUBLE_READY: readyFile,
+      NODE_OPTIONS: (process.env.NODE_OPTIONS ? process.env.NODE_OPTIONS + ' ' : '') + '--require=' + preload
+    };
+
+    // Pre-flight: prove the interception is installed before the application is started.
+    // A missing preload must fail loudly here; it must never fall back to a real `start`.
+    const probe = spawnSync(
+      process.execPath,
+      ['-e', "process.exit(require('child_process').exec.toString().includes('INTERCEPTED_NOT_EXECUTED') ? 0 : 3)"],
+      {
+        cwd: tempDir,
+        encoding: 'utf8',
+        timeout: 10000,
+        env: { ...doubleEnv, DOUBLE_LOG: probeLogFile, DOUBLE_READY: probeReadyFile }
+      }
+    );
+    if (probe.status !== 0) {
+      throw new Error(
+        `child-process interception could not be confirmed before the application started (probe exit ${probe.status}): ${probe.stderr ?? ''}`
+      );
+    }
+    if (!fs.existsSync(probeReadyFile)) {
+      throw new Error('child-process double did not signal readiness during the pre-start probe');
+    }
+
+    const result = spawnSync(process.execPath, ['index.js'], {
+      cwd: tempDir,
+      input,
+      encoding: 'utf8',
+      timeout: 10000,
+      env: doubleEnv
+    });
+
+    if (!fs.existsSync(readyFile)) {
+      throw new Error('child-process interception was not installed before the application started');
+    }
+
+    const entries = fs.existsSync(logFile)
+      ? fs.readFileSync(logFile, 'utf8').split('\n').filter(Boolean).map(line => JSON.parse(line))
+      : [];
+    const protectedNames = ['business.json', 'cofounder-state.json', 'memory.json', 'reminders.json', 'tasks.json', 'cofounder-settings.json'];
+    const state = {};
+    for (const name of protectedNames) {
+      const filePath = path.join(tempDir, name);
+      state[name] = fs.existsSync(filePath) ? fs.readFileSync(filePath, 'utf8') : null;
+    }
+    return {
+      result,
+      entries,
+      execCalls: entries.filter(entry => entry.boundary === 'child_process.exec'),
+      browserCalls: entries.filter(entry => entry.category === 'website-open-child-process'),
+      deliveries: entries.filter(entry => entry.boundary === 'child_process.exec.delivery'),
+      interceptorLoaded: entries.some(entry => entry.boundary === 'double.load'),
+      forwarded: entries.filter(entry => entry.forwardedToRealService === true).length,
+      state
+    };
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+}
+
+test('openWebsite launch failure is handled without terminating Cofounder', () => {
+  const run = runOpenWebsiteScenario('open zayzana\n', 'fail');
+
+  assert.equal(run.result.status, 0, 'the CLI must exit cleanly after a failed launch');
+  assert.equal(run.result.signal, null);
+  assert.doesNotMatch(run.result.stderr ?? '', /Unhandled 'error' event/);
+  assert.doesNotMatch(run.result.stderr ?? '', /throw er;/);
+  assert.match(run.result.stdout ?? '', /JARVIS > Attempting to open zayzana\./);
+  assert.match(run.result.stdout ?? '', /JARVIS > Could not open zayzana\. The browser did not start\./);
+});
+
+test('the browser failure response does not claim the browser opened', () => {
+  const run = runOpenWebsiteScenario('open zayzana\n', 'fail');
+  const stdout = run.result.stdout ?? '';
+
+  assert.doesNotMatch(stdout, /Opening zayzana/);
+  assert.doesNotMatch(stdout, /Opened zayzana/);
+  assert.match(stdout, /Attempting to open zayzana\./);
+  assert.equal((stdout.match(/Could not open zayzana/g) || []).length, 1);
+});
+
+test('a successful simulated launch follows the intended success path', () => {
+  const run = runOpenWebsiteScenario('open zayzana\n', 'success');
+  const stdout = run.result.stdout ?? '';
+
+  assert.equal(run.result.status, 0);
+  assert.equal(run.result.signal, null);
+  assert.match(stdout, /JARVIS > Attempting to open zayzana\./);
+  assert.doesNotMatch(stdout, /Could not open zayzana/);
+  // The existing command construction is unchanged (hardcoded URL from the allow-list).
+  assert.equal(run.browserCalls.length, 1);
+  assert.equal(run.browserCalls[0].command, 'start "" "https://syedzayn296-ops.github.io/zayzana-tech/"');
+  // Actual browser behaviour remains untested: only the process-launch signal is simulated.
+});
+
+test('an unknown name and a metacharacter name never reach the launch boundary', () => {
+  const unknown = runOpenWebsiteScenario('open bank\n', 'success');
+  assert.equal(unknown.result.status, 0);
+  assert.equal(unknown.execCalls.length, 0, 'an unknown name must not execute anything');
+  assert.doesNotMatch(unknown.result.stdout ?? '', /Attempting to open/);
+
+  const metacharacters = runOpenWebsiteScenario('open zayzana && calc\n', 'success');
+  assert.equal(metacharacters.result.status, 0);
+  assert.equal(metacharacters.execCalls.length, 0, 'an inexact match must not execute anything');
+  assert.doesNotMatch(metacharacters.result.stdout ?? '', /Attempting to open zayzana/);
+});
+
+test('the browser error handler does not conceal unrelated failures or block later commands', () => {
+  const run = runOpenWebsiteScenario('open zayzana\nshow tasks\ntell me something\n', 'fail');
+  const stdout = run.result.stdout ?? '';
+
+  assert.equal(run.result.status, 0);
+  assert.equal((stdout.match(/Could not open zayzana/g) || []).length, 1, 'exactly one failure response');
+  assert.match(stdout, /JARVIS TASKS/, 'later commands must still be handled');
+  assert.match(stdout, /GEMINI_API_KEY is not set/, 'unrelated failures must still be reported');
+  assert.equal(run.execCalls.length, 1, 'only the website launch may reach exec');
+});
+
+// A live child process is never created, so this test cannot prove that a real hooked/hung
+// process would not keep the CLI alive. It proves only that the CLI does not block its own
+// command flow while waiting for a callback that the double deliberately never delivers
+// (the double holds no OS handle and emits no event).
+test('a launch callback that never arrives does not block the CLI command flow', () => {
+  const run = runOpenWebsiteScenario('open zayzana\n', 'hang');
+
+  assert.equal(run.result.status, 0);
+  assert.equal(run.result.signal, null);
+  assert.match(run.result.stdout ?? '', /Attempting to open zayzana\./);
+  assert.doesNotMatch(run.result.stdout ?? '', /Could not open zayzana/);
+  // The application did supply a callback; the double simply never invokes it.
+  assert.equal(run.browserCalls.length, 1);
+  assert.equal(run.browserCalls[0].callbackProvided, true);
+  assert.equal(run.deliveries.length, 0);
+});
+
+// Evidence here is interceptor-based: the double reports what the application asked for.
+// The earlier inert detector shim was removed because it could not reliably run (a .cmd
+// cannot be executed as a process without a shell, so it could not detect the event it
+// claimed to detect). The fail-closed guards in runOpenWebsiteScenario are what prevent a
+// real launch: interception is verified before the app starts, the double must handshake,
+// and ComSpec is neutralised so a leaked exec() could not find a shell.
+test('no real browser or child process is launched (interceptor-based evidence) and no protected file is changed', () => {
+  const run = runOpenWebsiteScenario('open zayzana\n', 'launch-error');
+
+  assert.equal(run.interceptorLoaded, true, 'the double must have installed itself before the app started');
+  assert.equal(run.forwarded, 0, 'no attempt may be forwarded to a real service');
+  assert.equal(run.browserCalls.length, 1);
+  assert.equal(run.browserCalls[0].outcome, 'INTERCEPTED_NOT_EXECUTED');
+  assert.equal(run.browserCalls[0].callbackProvided, true);
+  // Protected user-data files in the isolated working directory stay absent or empty.
+  assert.equal(run.state['business.json'], null);
+  assert.equal(run.state['cofounder-state.json'], null);
+  assert.equal(run.state['memory.json'], null);
+  assert.equal(run.state['tasks.json'], '[]');
+  assert.equal(run.state['reminders.json'], '[]');
+  assert.equal(run.state['cofounder-settings.json'], JSON.stringify({ speechEnabled: false }, null, 2));
+});
+
+test('a failing launch with a callback is handled without an unhandled error event', () => {
+  const run = runOpenWebsiteScenario('open zayzana\n', 'launch-error');
+  const stdout = run.result.stdout ?? '';
+  const stderr = run.result.stderr ?? '';
+
+  // Production supplied the launch callback ...
+  assert.equal(run.browserCalls.length, 1);
+  assert.equal(run.browserCalls[0].callbackProvided, true, 'production exec() must receive an error callback');
+  // ... the double's synthetic failure actually ran, and it was delivered through that callback ...
+  assert.equal(run.deliveries.length, 1, 'the synthetic failure path must have run exactly once');
+  assert.equal(run.deliveries[0].outcome, 'CALLBACK_ERROR_DELIVERED');
+  assert.equal(run.deliveries[0].callbackProvided, true);
+  // ... so the CLI exits normally, reports exactly one bounded failure, and never crashes.
+  assert.equal(run.result.status, 0, 'exit 0 when the callback handles the failure');
+  assert.equal(run.result.signal, null);
+  assert.doesNotMatch(stderr, /Unhandled 'error' event/);
+  assert.doesNotMatch(stderr, /throw er;/);
+  assert.match(stdout, /JARVIS > Attempting to open zayzana\./);
+  assert.equal((stdout.match(/Could not open zayzana/g) || []).length, 1);
+  assert.equal(run.forwarded, 0);
+});
+
+// Synthetic negative control. The control is a mutated COPY of index.js written inside the
+// isolated temp directory; the repository file is never modified. Removing the callback
+// leaves Node with no 'error' listener on the child, so the double's 'error' event must
+// terminate the subprocess. This is what makes the test above discriminating: it fails if
+// the production callback is absent, even though the attempt/failure wording is unchanged.
+test('the callback-less control crashes in an isolated subprocess (synthetic negative control)', () => {
+  const run = runOpenWebsiteScenario('open zayzana\n', 'launch-error', { stripOpenWebsiteErrorCallback: true });
+  const stdout = run.result.stdout ?? '';
+  const stderr = run.result.stderr ?? '';
+
+  assert.equal(run.browserCalls.length, 1);
+  assert.equal(run.browserCalls[0].callbackProvided, false, 'the control must reach exec() with no callback');
+  assert.equal(run.deliveries.length, 1);
+  assert.equal(run.deliveries[0].outcome, 'ERROR_EVENT_EMITTED');
+  assert.equal(run.deliveries[0].callbackProvided, false);
+  assert.equal(run.result.signal, null);
+  assert.equal(run.result.status, 1, 'the uncaught error must terminate the isolated control');
+  assert.match(stderr, /Unhandled 'error' event/);
+  assert.match(stderr, /throw er;/);
+  // The mutated copy really ran the openWebsite path (a syntax error would not print this).
+  assert.match(stdout, /JARVIS > Attempting to open zayzana\./);
+  assert.equal(run.forwarded, 0);
+});

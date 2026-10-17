@@ -563,8 +563,18 @@ function openWebsite(name) {
         return;
     }
 
-    console.log(`JARVIS > Opening ${name}.`);
-    exec(`start "" "${url}"`);
+    // Report the attempt, not a confirmed launch: the outcome is only known once
+    // the shell reports back, and that report can fail. Supplying a callback also
+    // attaches an 'error' listener to the child process, so a failed launch is
+    // handled instead of surfacing as an unhandled 'error' event that terminates
+    // Cofounder.
+    console.log(`JARVIS > Attempting to open ${name}.`);
+    exec(`start "" "${url}"`, error => {
+        if (error) {
+            // Bounded message only: no filesystem paths or environment details.
+            console.log(`JARVIS > Could not open ${name}. The browser did not start.`);
+        }
+    });
 }
 
 // --------------------------------------------------
