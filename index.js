@@ -29,6 +29,37 @@ function saveJson(file, data) {
     fs.writeFileSync(file, JSON.stringify(data, null, 2));
 }
 
+// Read-only companion to loadJson for reporting paths: a missing file is never created and
+// a malformed file is never overwritten, so display commands cannot mutate local state.
+function readJson(file, fallback) {
+    try {
+        if (!fs.existsSync(file)) return fallback;
+
+        return JSON.parse(fs.readFileSync(file, "utf8"));
+    } catch (_) {
+        console.log(`Could not load ${file}. Using safe defaults.`);
+        return fallback;
+    }
+}
+
+// Required state for a command that must not silently continue from empty data. The thrown
+// message carries only the local file name, never an absolute path or raw parser text.
+function readRequiredJson(file) {
+    let raw;
+
+    try {
+        raw = fs.readFileSync(file, "utf8");
+    } catch (_) {
+        throw new Error(`Local state file "${file}" is missing or unreadable. Nothing was changed, so it can be restored safely.`);
+    }
+
+    try {
+        return JSON.parse(raw);
+    } catch (_) {
+        throw new Error(`Local state file "${file}" contains invalid JSON. It was left unchanged so it can be repaired.`);
+    }
+}
+
 // --------------------------------------------------
 // PERMANENT WINDOWS SPEECH (enabled by default)
 // --------------------------------------------------
@@ -180,7 +211,7 @@ function formatResearchClassification(query, result) {
     return output.length ? output.join("\n") : "No structured result titles/URLs detected.";
 }
 function saveResearchEntry(query, result, prospectName = null) {
-    const state = loadJson("cofounder-state.json", {});
+    const state = readJson("cofounder-state.json", {});
     if (!Array.isArray(state.research)) state.research = [];
 
     state.research.push({
@@ -251,7 +282,7 @@ function detectCommercialOpportunity(researchEntries) {
     };
 }
 function showCommercialOpportunityDetector() {
-    const state = loadJson("cofounder-state.json", {});
+    const state = readJson("cofounder-state.json", {});
     const research = Array.isArray(state.research) ? state.research : [];
     const result = detectCommercialOpportunity(research);
 
@@ -1274,7 +1305,7 @@ function showProspectIntelligence() {
         "Ask the prospect what business process is currently costing them the most time, money or repeated manual effort."
     );
 
-    const state = loadJson("cofounder-state.json", {});
+    const state = readJson("cofounder-state.json", {});
     const research = Array.isArray(state.research) ? state.research : [];
     const prospectResearch = research.filter((entry) =>
         entry.prospectName === prospect.name
@@ -1340,7 +1371,7 @@ function showProspectIntelligence() {
  // --------------------------------------------------
 
  function showProspectWorkspace() {
-    const businessData = loadJson("./business.json", {
+    const businessData = readJson("./business.json", {
         prospects: [],
         opportunities: [],
         offers: [],
@@ -1658,7 +1689,7 @@ function showProspectDiscovery() {
      console.log("6. Is there a budget or commercial constraint?");
      console.log("7. When would you want this solved?");
 
-     const state = loadJson("cofounder-state.json", {});
+     const state = readJson("cofounder-state.json", {});
     const research = Array.isArray(state.research) ? state.research : [];
     const prospectResearch = research.filter((entry) =>
         entry.prospectName === prospect.name
@@ -1789,8 +1820,8 @@ function decide(input) {
 }
 
 function worldModel() {
-    const state = loadJson("cofounder-state.json", {});
-    const currentBusiness = loadJson(businessFile, {
+    const state = readJson("cofounder-state.json", {});
+    const currentBusiness = readJson(businessFile, {
         prospects: [],
         opportunities: [],
         offers: [],
@@ -1837,7 +1868,7 @@ function worldModel() {
 function founderDashboard() {
     const world = worldModel();
     const heartbeat = evaluateHeartbeat();
-    const state = loadJson("cofounder-state.json", {});
+    const state = readJson("cofounder-state.json", {});
     const executions = Array.isArray(state.executions) ? state.executions : [];
 
     return {
@@ -1910,7 +1941,7 @@ function evaluateHeartbeat() {
         });
     }
 
-    const state = loadJson("cofounder-state.json", {});
+    const state = readJson("cofounder-state.json", {});
     const activeApprovals = Array.isArray(state.approvals) ? state.approvals.filter(a => a.status === "ACTIVE") : [];
 
     if (activeApprovals.length > 0) {
@@ -2889,7 +2920,7 @@ if (lower === "heartbeat" || lower === "cofounder heartbeat") {
         return;
     }
     if (lower === "research-latest") {
-        const state = loadJson("cofounder-state.json", {});
+        const state = readJson("cofounder-state.json", {});
         const latest = Array.isArray(state.research) ? state.research.at(-1) : null;
 
         console.log("\nJARVIS LATEST RESEARCH");
@@ -2929,7 +2960,7 @@ if (lower === "heartbeat" || lower === "cofounder heartbeat") {
                 return;
             }
 
-            const researchBusiness = loadJson("business.json", { prospects: [] });
+            const researchBusiness = readJson("business.json", { prospects: [] });
             const matches = (researchBusiness.prospects || []).filter(prospect =>
                 prospect.status !== "CLOSED" &&
                 typeof prospect.name === "string" &&
@@ -2981,7 +3012,7 @@ if (lower === "heartbeat" || lower === "cofounder heartbeat") {
     if (lower.startsWith("record decision ")) {
         const decisionText = trimmed.slice("record decision ".length).trim();
         const stateFile = "cofounder-state.json";
-        const state = JSON.parse(fs.readFileSync(stateFile, "utf8"));
+        const state = readRequiredJson(stateFile);
 
         if (!Array.isArray(state.decisions)) state.decisions = [];
 
@@ -3011,7 +3042,7 @@ if (lower === "heartbeat" || lower === "cofounder heartbeat") {
 
     if (lower === "show decisions" || lower === "decisions" || lower === "decision history") {
         const stateFile = "cofounder-state.json";
-        const state = JSON.parse(fs.readFileSync(stateFile, "utf8"));
+        const state = readJson(stateFile, {});
         const decisions = Array.isArray(state.decisions) ? state.decisions : [];
 
         console.log("");
@@ -3042,7 +3073,7 @@ if (lower === "heartbeat" || lower === "cofounder heartbeat") {
         const numberText = trimmed.slice("close decision ".length).trim();
         const number = parseInt(numberText, 10);
         const stateFile = "cofounder-state.json";
-        const state = JSON.parse(fs.readFileSync(stateFile, "utf8"));
+        const state = readRequiredJson(stateFile);
         const decisions = Array.isArray(state.decisions) ? state.decisions : [];
 
         if (!Number.isInteger(number) || number < 1 || number > decisions.length) {
@@ -3098,7 +3129,7 @@ if (lower === "heartbeat" || lower === "cofounder heartbeat") {
         const number = parseInt(parts.shift(), 10);
         const reason = parts.join(" ").trim();
         const stateFile = "cofounder-state.json";
-        const state = JSON.parse(fs.readFileSync(stateFile, "utf8"));
+        const state = readRequiredJson(stateFile);
         const decisions = Array.isArray(state.decisions) ? state.decisions : [];
 
         if (!Number.isInteger(number) || number < 1 || number > decisions.length || !reason) {
@@ -3128,7 +3159,7 @@ if (lower === "heartbeat" || lower === "cofounder heartbeat") {
         const number = parseInt(parts.shift(), 10);
         const evidenceText = parts.join(" ").trim();
         const stateFile = "cofounder-state.json";
-        const state = JSON.parse(fs.readFileSync(stateFile, "utf8"));
+        const state = readRequiredJson(stateFile);
         const decisions = Array.isArray(state.decisions) ? state.decisions : [];
 
         if (!Number.isInteger(number) || number < 1 || number > decisions.length || !evidenceText) {
@@ -3160,7 +3191,7 @@ if (lower === "heartbeat" || lower === "cofounder heartbeat") {
         const number = parseInt(parts.shift(), 10);
         const outcomeText = parts.join(" ").trim();
         const stateFile = "cofounder-state.json";
-        const state = JSON.parse(fs.readFileSync(stateFile, "utf8"));
+        const state = readRequiredJson(stateFile);
         const decisions = Array.isArray(state.decisions) ? state.decisions : [];
 
         if (!Number.isInteger(number) || number < 1 || number > decisions.length || !outcomeText) {
@@ -3193,7 +3224,7 @@ if (lower === "heartbeat" || lower === "cofounder heartbeat") {
         const number = parseInt(parts.shift(), 10);
         const lessonText = parts.join(" ").trim();
         const stateFile = "cofounder-state.json";
-        const state = JSON.parse(fs.readFileSync(stateFile, "utf8"));
+        const state = readRequiredJson(stateFile);
         const decisions = Array.isArray(state.decisions) ? state.decisions : [];
 
         if (!Number.isInteger(number) || number < 1 || number > decisions.length || !lessonText) {
@@ -3244,7 +3275,7 @@ if (lower === "heartbeat" || lower === "cofounder heartbeat") {
     if (lower.startsWith("approve recommendation ")) {
         const rawApproval = trimmed.slice("approve recommendation ".length).trim();
         const stateFile = "cofounder-state.json";
-        const state = JSON.parse(fs.readFileSync(stateFile, "utf8"));
+        const state = readRequiredJson(stateFile);
         const decisions = Array.isArray(state.decisions) ? state.decisions : [];
 
         // DECISION LINKAGE MUST BE EXPLICIT AND UNAMBIGUOUS.
@@ -3361,7 +3392,7 @@ if (lower === "heartbeat" || lower === "cofounder heartbeat") {
         const numberText = trimmed.slice("execute approved ".length).trim();
         const number = parseInt(numberText, 10);
         const stateFile = "cofounder-state.json";
-        const state = JSON.parse(fs.readFileSync(stateFile, "utf8"));
+        const state = readRequiredJson(stateFile);
         const approvals = Array.isArray(state.approvals) ? state.approvals : [];
 
         if (!Number.isInteger(number) || number < 1 || number > approvals.length) {
@@ -3447,7 +3478,7 @@ if (lower === "heartbeat" || lower === "cofounder heartbeat") {
         const number = parseInt(parts[2], 10);
         const verificationStatus = (parts[3] || "").toUpperCase();
         const stateFile = "cofounder-state.json";
-        const state = JSON.parse(fs.readFileSync(stateFile, "utf8"));
+        const state = readRequiredJson(stateFile);
         const executions = Array.isArray(state.executions) ? state.executions : [];
 
         if (!Number.isInteger(number) || number < 1 || number > executions.length) {
@@ -3508,8 +3539,14 @@ if (lower === "heartbeat" || lower === "cofounder heartbeat") {
         return true;
     }
     if (lower === "challenge" || lower === "cofounder challenge" || lower === "challenge recommendation") {
-        const state = JSON.parse(fs.readFileSync("cofounder-state.json", "utf8"));
-        const business = JSON.parse(fs.readFileSync("business.json", "utf8"));
+        const state = readJson("cofounder-state.json", {});
+        const business = readJson("business.json", {
+            prospects: [],
+            opportunities: [],
+            offers: [],
+            followUps: [],
+            revenue: []
+        });
         const prospects = business.prospects || [];
         const openFollowUps = business.followUps.filter(f => f.status === "OPEN");
 
@@ -3564,8 +3601,8 @@ if (lower === "heartbeat" || lower === "cofounder heartbeat") {
     }
 
     if (lower === "recommend" || lower === "cofounder recommend" || lower === "recommend next") {
-        const state = JSON.parse(fs.readFileSync("cofounder-state.json", "utf8"));
-        const business = JSON.parse(fs.readFileSync("business.json", "utf8"));
+        const state = readRequiredJson("cofounder-state.json");
+        const business = readRequiredJson("business.json");
         const activeGoals = state.goals.filter(g => g.status === "ACTIVE");
         const openOpps = business.opportunities.filter(o => o.status === "OPEN");
         const openFollowUps = business.followUps.filter(f => f.status === "OPEN");
@@ -3643,7 +3680,7 @@ if (lower === "heartbeat" || lower === "cofounder heartbeat") {
         }
 
         console.log("\nDECISION CHECK");
-        const decisionState = JSON.parse(fs.readFileSync("cofounder-state.json", "utf8"));
+        const decisionState = readRequiredJson("cofounder-state.json");
         const activeDecisionList = Array.isArray(decisionState.decisions)
             ? decisionState.decisions.filter(d => d.status === "ACTIVE")
             : [];
@@ -3724,7 +3761,7 @@ if (lower === "heartbeat" || lower === "cofounder heartbeat") {
         return;
     }
 
-    const business = JSON.parse(fs.readFileSync("business.json", "utf8"));
+    const business = readRequiredJson("business.json");
     const prospects = business.prospects || [];
     const active = resolveActiveProspect(business);
 
@@ -3816,7 +3853,7 @@ if (input.startsWith("discovery impact ")) {
         return;
     }
 
-    const business = JSON.parse(fs.readFileSync("business.json", "utf8"));
+    const business = readRequiredJson("business.json");
     const prospects = business.prospects || [];
     const active = resolveActiveProspect(business);
 
@@ -3852,7 +3889,7 @@ if (input.startsWith("discovery impact ")) {
     return;
 }
 if (input === "next discovery" || input === "discovery question") {
-    const business = JSON.parse(fs.readFileSync("business.json", "utf8"));
+    const business = readRequiredJson("business.json");
     const prospects = business.prospects || [];
     const active = resolveActiveProspect(business);
 
@@ -3896,7 +3933,7 @@ if (input === "next discovery" || input === "discovery question") {
     return;
 }
 if (input === "run cycle" || input === "cycle") {
-    const businessState = JSON.parse(fs.readFileSync("business.json", "utf8"));
+    const businessState = readRequiredJson("business.json");
     const activeProspects = (businessState.prospects || []).filter(p => p.status !== "CLOSED");
 
     console.log("");
@@ -3999,7 +4036,7 @@ if (input === "run cycle" || input === "cycle") {
 
     console.log("");
 
-    const cofounderState = JSON.parse(fs.readFileSync("cofounder-state.json", "utf8"));
+    const cofounderState = readRequiredJson("cofounder-state.json");
     const activeApprovals = Array.isArray(cofounderState.approvals)
         ? cofounderState.approvals.filter(a => a.status === "ACTIVE")
         : [];
@@ -4416,7 +4453,7 @@ if (input === "commercial brain" || input === "commercial") { commercialBrain.an
             });
         }
 
-        const state = loadJson("cofounder-state.json", {});
+        const state = readJson("cofounder-state.json", {});
     const research = Array.isArray(state.research) ? state.research : [];
     const prospectResearch = research.filter((entry) =>
         entry.prospectName === prospect.name
@@ -4567,7 +4604,7 @@ if (input === "commercial brain" || input === "commercial") { commercialBrain.an
             console.log("No proposal or external action should occur without Zayn's approval.");
         }
 
-        const state = loadJson("cofounder-state.json", {});
+        const state = readJson("cofounder-state.json", {});
     const research = Array.isArray(state.research) ? state.research : [];
     const prospectResearch = research.filter((entry) =>
         entry.prospectName === prospect.name
@@ -4992,8 +5029,8 @@ rl.on("line", (line) => {
 
 const commercialBrain = {
     analyze() {
-        const state = JSON.parse(fs.readFileSync("cofounder-state.json", "utf8"));
-        const business = JSON.parse(fs.readFileSync("business.json", "utf8"));
+        const state = readJson("cofounder-state.json", {});
+        const business = readJson("business.json", {});
 
         const prospects = business.prospects || [];
         const opportunities = business.opportunities || [];
@@ -5597,7 +5634,7 @@ function showActionQueue() {
 
 
 function commercialAssessment() {
-    const business = JSON.parse(fs.readFileSync("business.json", "utf8"));
+    const business = readJson("business.json", {});
     const prospects = Array.isArray(business.prospects) ? business.prospects : [];
     const prospect = resolveActiveProspect(business);
 
@@ -5758,7 +5795,7 @@ function describeProspectResolution(reason) {
 }
 
 function commercialFigures(category) {
-    const businessState = JSON.parse(fs.readFileSync("business.json", "utf8"));
+    const businessState = readJson("business.json", {});
     const resolution = resolveFigureProspect(businessState);
     const discovery = resolution.prospect ? (resolution.prospect.discovery || {}) : {};
 

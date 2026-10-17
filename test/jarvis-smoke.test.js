@@ -3320,3 +3320,255 @@ test('the callback-less control crashes in an isolated subprocess (synthetic neg
   assert.match(stdout, /JARVIS > Attempting to open zayzana\./);
   assert.equal(run.forwarded, 0);
 });
+
+
+// --------------------------------------------------
+// state-file read hygiene (O5 / O6)
+// --------------------------------------------------
+// Read-only commands must not create absent state files, and a command that needs state must
+// not leak filesystem paths or raw parser text when the file is missing or malformed. A
+// child-process double is installed BEFORE the application starts (NODE_OPTIONS=--require), so
+// no speech, research or shell process can run, and ComSpec points at a non-existent path as a
+// second fail-closed guard. The double writes a ready-handshake that this helper requires, so a
+// preload that failed to install can never look like a pass.
+function runStateHygieneScenario(input, options = {}) {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'jarvis-statehygiene-'));
+
+  try {
+    fs.copyFileSync(indexFile, path.join(tempDir, 'index.js'));
+    fs.writeFileSync(
+      path.join(tempDir, 'cofounder-settings.json'),
+      JSON.stringify({ speechEnabled: false }, null, 2)
+    );
+    for (const [name, content] of Object.entries(options.files || {})) {
+      fs.writeFileSync(path.join(tempDir, name), content);
+    }
+
+    fs.writeFileSync(
+      path.join(tempDir, 'double-exec.cjs'),
+      [
+        'const fs = require("fs");',
+        'const cp = require("child_process");',
+        'const LOG = process.env.DOUBLE_LOG;',
+        'const READY = process.env.DOUBLE_READY;',
+        'function log(entry) { if (!LOG) return; try { fs.appendFileSync(LOG, JSON.stringify(Object.assign({ at: new Date().toISOString(), forwardedToRealService: false }, entry)) + "\\n"); } catch (_) {} }',
+        'try { fs.writeFileSync(READY, "installed\\n"); } catch (_) {}',
+        'log({ boundary: "double.load", category: "interception", outcome: "INSTALLED" });',
+        'function classify(command) {',
+        '  const c = String(command || "");',
+        '  if (/mcporter/i.test(c)) return "research-child-process";',
+        '  if (/taskkill/i.test(c)) return "speech-cleanup-child-process";',
+        '  if (/^\\s*start\\s+""/i.test(c) || /https?:\\/\\//i.test(c)) return "website-open-child-process";',
+        '  return "child-process-other";',
+        '}',
+        'function fakeChild() {',
+        '  const { EventEmitter } = require("events");',
+        '  const child = new EventEmitter();',
+        '  child.pid = 900000;',
+        '  child.stdout = new EventEmitter();',
+        '  child.stderr = new EventEmitter();',
+        '  child.kill = function () { log({ boundary: "child_process.ChildProcess.kill", category: "child-process-kill", outcome: "INTERCEPTED_NO_KILL" }); return true; };',
+        '  return child;',
+        '}',
+        'cp.exec = function (command, options, callback) {',
+        '  const cb = typeof options === "function" ? options : callback;',
+        '  log({ boundary: "child_process.exec", category: classify(command), outcome: "INTERCEPTED_NOT_EXECUTED", command: String(command).slice(0, 200) });',
+        '  const child = fakeChild();',
+        '  setImmediate(function () { if (typeof cb === "function") cb(null, "", ""); else child.emit("close", 0); });',
+        '  return child;',
+        '};',
+        'cp.execSync = function (file) { log({ boundary: "child_process.execSync", category: classify(file), outcome: "INTERCEPTED_NOT_EXECUTED" }); return ""; };',
+        'cp.execFileSync = function (file) { log({ boundary: "child_process.execFileSync", category: classify(file), outcome: "INTERCEPTED_NOT_EXECUTED" }); return ""; };',
+        'cp.execFile = function (file, args, options, callback) { const cb = typeof options === "function" ? options : (typeof args === "function" ? args : callback); log({ boundary: "child_process.execFile", category: classify(file), outcome: "INTERCEPTED_NOT_EXECUTED" }); if (typeof cb === "function") setImmediate(function () { cb(null, "", ""); }); return fakeChild(); };',
+        'cp.spawn = function (file) { log({ boundary: "child_process.spawn", category: /powershell/i.test(String(file)) ? "speech-process-spawn" : classify(file), outcome: "INTERCEPTED_NOT_SPAWNED" }); return fakeChild(); };',
+        'cp.spawnSync = function (file) { log({ boundary: "child_process.spawnSync", category: classify(file), outcome: "INTERCEPTED_NOT_SPAWNED" }); return { status: 0, stdout: "", stderr: "", pid: 900000, output: [null, "", ""], signal: null }; };',
+        ''
+      ].join('\n')
+    );
+
+    const logFile = path.join(tempDir, 'double-log.jsonl');
+    const readyFile = path.join(tempDir, 'double-ready.txt');
+    const probeReadyFile = path.join(tempDir, 'double-ready-probe.txt');
+    const preload = path.join(tempDir, 'double-exec.cjs').replace(/\\/g, '/');
+    const env = {
+      ...process.env,
+      GEMINI_API_KEY: '',
+      // Fail-closed: if the double ever failed to install, exec() could not locate a shell.
+      ComSpec: path.join(tempDir, 'no-shell-here.cmd'),
+      DOUBLE_LOG: logFile,
+      DOUBLE_READY: readyFile,
+      NODE_OPTIONS: (process.env.NODE_OPTIONS ? process.env.NODE_OPTIONS + ' ' : '') + '--require=' + preload
+    };
+
+    // Pre-flight: prove the interception is installed before the application is started.
+    const probe = spawnSync(
+      process.execPath,
+      ['-e', "process.exit(require('child_process').exec.toString().includes('INTERCEPTED_NOT_EXECUTED') ? 0 : 3)"],
+      { cwd: tempDir, encoding: 'utf8', timeout: 10000, env: { ...env, DOUBLE_LOG: '', DOUBLE_READY: probeReadyFile } }
+    );
+    if (probe.status !== 0) {
+      throw new Error(
+        `child-process interception could not be confirmed before the application started (probe exit ${probe.status}): ${probe.stderr ?? ''}`
+      );
+    }
+    if (!fs.existsSync(probeReadyFile)) {
+      throw new Error('child-process double did not signal readiness during the pre-start probe');
+    }
+
+    const result = spawnSync(process.execPath, ['index.js'], {
+      cwd: tempDir,
+      input,
+      encoding: 'utf8',
+      timeout: 10000,
+      env
+    });
+
+    if (!fs.existsSync(readyFile)) {
+      throw new Error('child-process interception was not installed before the application started');
+    }
+
+    const entries = fs.existsSync(logFile)
+      ? fs.readFileSync(logFile, 'utf8').split('\n').filter(Boolean).map(line => JSON.parse(line))
+      : [];
+    const protectedNames = ['business.json', 'cofounder-state.json', 'memory.json', 'reminders.json', 'tasks.json', 'cofounder-settings.json'];
+    const protectedFiles = {};
+    for (const name of protectedNames) {
+      const filePath = path.join(tempDir, name);
+      protectedFiles[name] = fs.existsSync(filePath) ? fs.readFileSync(filePath, 'utf8') : null;
+    }
+    return {
+      result,
+      entries,
+      childProcessCalls: entries.filter(entry => String(entry.boundary).startsWith('child_process')),
+      forwarded: entries.filter(entry => entry.forwardedToRealService === true).length,
+      protectedFiles
+    };
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+}
+
+const hygieneBusinessSeed = JSON.stringify({
+  prospects: [],
+  opportunities: [],
+  offers: [],
+  followUps: [],
+  revenue: [],
+  marker: 'business-untouched'
+}, null, 2);
+
+const hygieneStateSeed = JSON.stringify({
+  goals: [],
+  decisions: [],
+  approvals: [],
+  executions: [],
+  lessons: [],
+  research: [],
+  marker: 'state-untouched'
+}, null, 2);
+
+test('state-file read hygiene: status does not create absent business.json or cofounder-state.json', () => {
+  const run = runStateHygieneScenario('status\n');
+
+  assert.equal(run.result.status, 0, 'stdout: ' + run.result.stdout + '\nstderr: ' + run.result.stderr);
+  assert.match(run.result.stdout ?? '', /COFOUNDER FOUNDER DASHBOARD/);
+  assert.equal(run.protectedFiles['business.json'], null, 'a read-only status must not create business.json');
+  assert.equal(run.protectedFiles['cofounder-state.json'], null, 'a read-only status must not create cofounder-state.json');
+  assert.equal(run.childProcessCalls.length, 0, 'no child process may be attempted; entries: ' + JSON.stringify(run.entries));
+  assert.equal(run.forwarded, 0);
+});
+
+test('state-file read hygiene: world-model does not create absent state files', () => {
+  const run = runStateHygieneScenario('world model\n');
+
+  assert.equal(run.result.status, 0, 'stdout: ' + run.result.stdout + '\nstderr: ' + run.result.stderr);
+  assert.match(run.result.stdout ?? '', /ZAYZANA WORLD MODEL/);
+  assert.equal(run.protectedFiles['business.json'], null, 'world model must not create business.json');
+  assert.equal(run.protectedFiles['cofounder-state.json'], null, 'world model must not create cofounder-state.json');
+  assert.equal(run.childProcessCalls.length, 0, 'no child process may be attempted');
+});
+
+test('state-file read hygiene: a read-only command leaves existing valid state files byte-identical', () => {
+  const run = runStateHygieneScenario('status\n', {
+    files: { 'business.json': hygieneBusinessSeed, 'cofounder-state.json': hygieneStateSeed }
+  });
+
+  assert.equal(run.result.status, 0, 'stdout: ' + run.result.stdout + '\nstderr: ' + run.result.stderr);
+  assert.equal(run.protectedFiles['business.json'], hygieneBusinessSeed);
+  assert.equal(run.protectedFiles['cofounder-state.json'], hygieneStateSeed);
+  assert.equal(run.childProcessCalls.length, 0, 'no child process may be attempted');
+});
+
+test('state-file read hygiene: a malformed business.json is not overwritten by a read-only command', () => {
+  const run = runStateHygieneScenario('status\n', {
+    files: { 'business.json': '{ invalid json', 'cofounder-state.json': hygieneStateSeed }
+  });
+
+  assert.equal(run.result.status, 0, 'stdout: ' + run.result.stdout + '\nstderr: ' + run.result.stderr);
+  assert.equal(run.protectedFiles['business.json'], '{ invalid json', 'a malformed file must be left for repair');
+  assert.equal(run.protectedFiles['cofounder-state.json'], hygieneStateSeed);
+  assert.doesNotMatch(run.result.stdout ?? '', /Unexpected token|SyntaxError/);
+  assert.doesNotMatch(run.result.stdout ?? '', /[A-Za-z]:\\/);
+});
+
+test('state-file read hygiene: a malformed cofounder-state.json is not overwritten by a read-only command', () => {
+  const run = runStateHygieneScenario('show decisions\n', {
+    files: { 'cofounder-state.json': '{ broken json' }
+  });
+
+  assert.equal(run.result.status, 0, 'stdout: ' + run.result.stdout + '\nstderr: ' + run.result.stderr);
+  assert.match(run.result.stdout ?? '', /JARVIS DECISION HISTORY/);
+  assert.match(run.result.stdout ?? '', /No decisions recorded\./);
+  assert.equal(run.protectedFiles['cofounder-state.json'], '{ broken json', 'a malformed file must be left for repair');
+  assert.doesNotMatch(run.result.stdout ?? '', /Unexpected token|SyntaxError/);
+});
+
+test('state-file read hygiene: read-only commands tolerate absent state and still create nothing', () => {
+  const run = runStateHygieneScenario('show decisions\nresearch-latest\n');
+
+  assert.equal(run.result.status, 0, 'stdout: ' + run.result.stdout + '\nstderr: ' + run.result.stderr);
+  assert.match(run.result.stdout ?? '', /No decisions recorded\./);
+  assert.match(run.result.stdout ?? '', /No saved research sessions\./);
+  assert.equal(run.protectedFiles['cofounder-state.json'], null, 'absent state must stay absent');
+  assert.equal(run.protectedFiles['business.json'], null, 'absent state must stay absent');
+  assert.equal(run.childProcessCalls.length, 0, 'no child process may be attempted');
+});
+
+test('state-file read hygiene: a missing required state file fails with a bounded message and no path', () => {
+  const run = runStateHygieneScenario('record decision tighten local state hygiene\n');
+
+  assert.equal(run.result.status, 0, 'stdout: ' + run.result.stdout + '\nstderr: ' + run.result.stderr);
+  assert.match(run.result.stdout ?? '', /Local state file "cofounder-state\.json" is missing or unreadable/);
+  assert.doesNotMatch(run.result.stdout ?? '', /ENOENT|no such file/i);
+  assert.doesNotMatch(run.result.stdout ?? '', /Unexpected token|SyntaxError/);
+  assert.doesNotMatch(run.result.stdout ?? '', /[A-Za-z]:\\/);
+  assert.equal(run.protectedFiles['cofounder-state.json'], null, 'a failed command must not create the missing file');
+  assert.equal(run.childProcessCalls.length, 0, 'no child process may be attempted');
+});
+
+test('state-file read hygiene: a malformed required state file fails with a bounded message and is left unchanged', () => {
+  const run = runStateHygieneScenario('record decision tighten local state hygiene\n', {
+    files: { 'cofounder-state.json': '{ broken json' }
+  });
+
+  assert.equal(run.result.status, 0, 'stdout: ' + run.result.stdout + '\nstderr: ' + run.result.stderr);
+  assert.match(run.result.stdout ?? '', /Local state file "cofounder-state\.json" contains invalid JSON/);
+  assert.match(run.result.stdout ?? '', /left unchanged so it can be repaired/);
+  assert.equal(run.protectedFiles['cofounder-state.json'], '{ broken json', 'a malformed file must be left for repair');
+  assert.doesNotMatch(run.result.stdout ?? '', /Unexpected token|SyntaxError/);
+  assert.doesNotMatch(run.result.stdout ?? '', /[A-Za-z]:\\/);
+});
+
+test('state-file read hygiene: an intentional state write still records the decision', () => {
+  const run = runStateHygieneScenario('record decision hygiene-check\n', {
+    files: { 'cofounder-state.json': hygieneStateSeed }
+  });
+
+  assert.equal(run.result.status, 0, 'stdout: ' + run.result.stdout + '\nstderr: ' + run.result.stderr);
+  assert.match(run.result.stdout ?? '', /JARVIS DECISION RECORDED/);
+  const written = JSON.parse(run.protectedFiles['cofounder-state.json']);
+  assert.equal(written.decisions.length, 1);
+  assert.equal(written.decisions[0].decision, 'hygiene-check');
+  assert.equal(written.decisions[0].status, 'ACTIVE');
+  assert.equal(run.protectedFiles['business.json'], null, 'recording a decision must not create business.json');
+});
