@@ -2198,3 +2198,411 @@ test('stop during the grounded research stage cancels the answer and skips the a
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
 });
+
+
+test('numerical evidence discipline safeguard immediately follows the kill-criterion instruction', () => {
+  const { result, capturedAIRequests } = runIsolatedJarvis(
+    { prospects: [], opportunities: [], offers: [], followUps: [], revenue: [] },
+    'Give me one practical recommendation for testing demand and state what evidence would justify proceeding or stopping.\n',
+    {},
+    { fakeAIResponse: true, captureAIRequests: true }
+  );
+
+  assert.equal(result.status, 0, 'stdout: ' + result.stdout + '\nstderr: ' + result.stderr);
+  const requests = capturedAIRequests ?? [];
+  assert.equal(requests.length, 1, 'a plain prompt should produce exactly one AI request');
+  const prompt = JSON.parse(requests[0]).contents[0].parts[0].text;
+
+  assert.match(prompt, /NUMERICAL EVIDENCE DISCIPLINE:/);
+  assert.match(prompt, /Use only figures supplied in this conversation and valid calculations from them/);
+  assert.match(prompt, /budget amounts, budget percentages, spending limits/);
+  assert.match(prompt, /numerical thresholds or any other unsupported quantitative recommendation/);
+  assert.match(prompt, /Do not introduce illustrative numerical placeholders, even when labelled illustrative/);
+  assert.match(prompt, /offer estimates only when the user explicitly authorises them/);
+  assert.match(prompt, /An available budget is not permission to spend it/);
+  assert.match(prompt, /cannot establish a numerical threshold or budget allocation/);
+  assert.match(prompt, /offer a qualitative alternative instead/);
+  assert.match(prompt, /a clear kill criterion, and the cheapest next validation step/);
+
+  const lines = prompt.split('\n');
+  const killIndex = lines.findIndex(line => /a clear kill criterion, and the cheapest next validation step/.test(line));
+  const disciplineIndex = lines.findIndex(line => /NUMERICAL EVIDENCE DISCIPLINE:/.test(line));
+  assert.ok(killIndex >= 0, 'the kill-criterion instruction must be present');
+  assert.equal(disciplineIndex, killIndex + 1, 'the safeguard must immediately follow the kill-criterion instruction');
+});
+
+test('numerical evidence discipline safeguard reaches the commercial-deliverable audit prompt', () => {
+  const { result, capturedAIRequest, capturedAIRequests } = runIsolatedJarvis(
+    { prospects: [], opportunities: [], offers: [], followUps: [], revenue: [] },
+    'Produce a complete commercial decision brief for a pilot offer with pricing and delivery scope.\n',
+    {},
+    { fakeAIResponse: true, captureAIRequest: true, captureAIRequests: true }
+  );
+
+  assert.equal(result.status, 0, 'stdout: ' + result.stdout + '\nstderr: ' + result.stderr);
+  assert.match(result.stdout ?? '', /Running commercial evidence and delivery audit/);
+
+  const requests = capturedAIRequests ?? [];
+  assert.equal(requests.length, 2, 'a commercial deliverable should produce a draft call plus one audit call');
+
+  const draftPrompt = JSON.parse(requests[0]).contents[0].parts[0].text;
+  const auditPrompt = JSON.parse(requests[1]).contents[0].parts[0].text;
+  const capturedAuditPrompt = JSON.parse(capturedAIRequest).contents[0].parts[0].text;
+
+  assert.equal(auditPrompt, capturedAuditPrompt, 'captureAIRequest should hold the final audit request');
+  assert.match(auditPrompt, /independent commercial evidence and delivery reviewer/);
+  assert.match(draftPrompt, /NUMERICAL EVIDENCE DISCIPLINE:/, 'the draft prompt must carry the safeguard');
+  assert.match(auditPrompt, /NUMERICAL EVIDENCE DISCIPLINE:/, 'the audit prompt must reuse the prepared context carrying the safeguard');
+});
+
+// ---------------------------------------------------------------------------
+// EVIDENCE-BOUNDED COMMERCIAL FIGURES (deterministic commercial workflow only)
+//
+// These tests cover the deterministic workflow. The free-form AI path is NOT
+// mechanically validated; its safeguard remains prompt-only (Fix 1 and Fix 2),
+// as the final test in this block documents.
+// ---------------------------------------------------------------------------
+
+test('commercial figures derives a contribution only from a recorded price and cost', () => {
+  const { result } = runIsolatedJarvis(
+    prospectFixture({
+      problem: 'Manual customer follow-up is consuming staff time',
+      price: 'R15000',
+      cost: 'R9000'
+    }),
+    'commercial figures\n'
+  );
+
+  assert.equal(result.status, 0, 'stdout: ' + result.stdout + '\nstderr: ' + result.stderr);
+  assert.match(result.stdout ?? '', /JARVIS COMMERCIAL FIGURES/);
+  assert.match(result.stdout ?? '', /Contribution: 6000/);
+  assert.match(result.stdout ?? '', /contribution = price - cost = 15000 - 9000 = 6000/);
+});
+
+test('commercial figures refuses to fabricate a contribution when price or cost is missing', () => {
+  const priceOnly = runIsolatedJarvis(
+    prospectFixture({
+      problem: 'Manual customer follow-up is consuming staff time',
+      price: 'R15000'
+    }),
+    'commercial figures\n'
+  );
+
+  assert.equal(priceOnly.result.status, 0);
+  assert.match(priceOnly.result.stdout ?? '', /Contribution: NOT CALCULATED/);
+  assert.match(priceOnly.result.stdout ?? '', /Missing recorded evidence: cost/);
+  assert.doesNotMatch(priceOnly.result.stdout ?? '', /contribution = price - cost/);
+
+  const neither = runIsolatedJarvis(
+    prospectFixture({ problem: 'Manual customer follow-up is consuming staff time' }),
+    'commercial figures\n'
+  );
+
+  assert.equal(neither.result.status, 0);
+  assert.match(neither.result.stdout ?? '', /Contribution: NOT CALCULATED/);
+  assert.match(neither.result.stdout ?? '', /Missing recorded evidence: price, cost/);
+});
+
+test('commercial figures withholds an unsupported threshold or sample size with no invented figure', () => {
+  const { result } = runIsolatedJarvis(
+    prospectFixture({ problem: 'Manual customer follow-up is consuming staff time' }),
+    'commercial figures sample size\ncommercial figures kill threshold\ncommercial figures budget percentage\n'
+  );
+
+  assert.equal(result.status, 0, 'stdout: ' + result.stdout + '\nstderr: ' + result.stderr);
+  const stdout = result.stdout ?? '';
+
+  assert.match(stdout, /No sample size can be stated from the recorded evidence\./);
+  assert.match(stdout, /No kill threshold can be stated from the recorded evidence\./);
+  assert.match(stdout, /No budget percentage can be stated from the recorded evidence\./);
+
+  const statementLines = stdout
+    .split('\n')
+    .filter(line => /can be stated from the recorded evidence/.test(line));
+
+  assert.equal(statementLines.length, 3, 'each request must produce exactly one fixed statement');
+  for (const line of statementLines) {
+    assert.doesNotMatch(line, /\d/, 'a withheld figure statement must contain no number: ' + line);
+  }
+});
+
+test('an unqualified prospect still blocks the commercial recommendation and its figures', () => {
+  const { result, business } = runIsolatedJarvis(
+    prospectFixture({
+      problem: 'Manual customer follow-up is consuming staff time',
+      impact: 'Staff spend 10 hours per week chasing responses',
+      currentSolution: 'Staff use spreadsheets and manual messages',
+      desiredOutcome: 'Automate routine follow-up and tracking',
+      decisionMaker: 'Operations manager',
+      price: 'R15000',
+      cost: 'R9000'
+    }),
+    'cycle\n'
+  );
+
+  assert.equal(result.status, 0);
+  assert.match(result.stdout ?? '', /Qualification: READY FOR CONFIRMATION/);
+  assert.match(result.stdout ?? '', /No commercial recommendation was made/);
+  assert.doesNotMatch(result.stdout ?? '', /contribution = price - cost/);
+  assert.notEqual(business.prospects[0].qualification?.status, 'QUALIFIED');
+});
+
+test('a derived contribution does not bypass the approval gate', () => {
+  const fixture = prospectFixture({
+    problem: 'Manual customer follow-up is consuming staff time',
+    impact: 'Staff spend 10 hours per week chasing responses',
+    currentSolution: 'Staff use spreadsheets and manual messages',
+    desiredOutcome: 'Automate routine follow-up and tracking',
+    decisionMaker: 'Operations manager',
+    price: 'R15000',
+    cost: 'R9000'
+  });
+  fixture.prospects[0].qualification = {
+    status: 'QUALIFIED',
+    confirmedAt: '2026-10-11T00:00:00.000Z',
+    confirmationSource: 'ZAYN_CONFIRMED_BUYER_EVIDENCE'
+  };
+
+  const { result } = runIsolatedJarvis(fixture, 'cycle\n');
+
+  assert.equal(result.status, 0);
+  assert.match(result.stdout ?? '', /COMMERCIAL RECOMMENDATION/);
+  assert.match(result.stdout ?? '', /contribution = price - cost = 15000 - 9000 = 6000/);
+  assert.match(result.stdout ?? '', /STATUS: READY FOR ZAYN APPROVAL/);
+  assert.match(result.stdout ?? '', /External action: BLOCKED/);
+});
+
+test('the free-form AI path keeps Fix 1 and Fix 2 prompts and is not mechanically validated', () => {
+  const unsupportedReply = 'Contact 20-30 prospective buyers before deciding whether to continue.';
+  const { result, capturedAIRequests } = runIsolatedJarvis(
+    { prospects: [], opportunities: [], offers: [], followUps: [], revenue: [] },
+    'Give me one practical recommendation for testing demand and state what evidence would justify proceeding or stopping.\n',
+    {},
+    { fakeAIResponses: [unsupportedReply], captureAIRequests: true }
+  );
+
+  assert.equal(result.status, 0, 'stdout: ' + result.stdout + '\nstderr: ' + result.stderr);
+
+  const requests = capturedAIRequests ?? [];
+  assert.equal(requests.length, 1, 'a plain prompt should produce exactly one AI request');
+  const prompt = JSON.parse(requests[0]).contents[0].parts[0].text;
+
+  // Fix 1 and Fix 2 prompt instructions remain on the free-form path.
+  assert.match(prompt, /NUMERICAL EVIDENCE DISCIPLINE:/);
+  assert.match(prompt, /An available budget is not permission to spend it/);
+  assert.match(prompt, /Do not introduce illustrative numerical placeholders, even when labelled illustrative/);
+
+  // Documented limitation: the deterministic figure guard does NOT inspect or
+  // rewrite free-form AI answers, so an unsupported figure is returned verbatim.
+  assert.match(result.stdout ?? '', /Contact 20-30 prospective buyers before deciding whether to continue\./);
+});
+
+// ---------------------------------------------------------------------------
+// AUDIT CORRECTIONS — evidence-bounded commercial figures
+// Each test below pins a defect that was reproduced against the previous
+// implementation: ambiguous amount parsing, currency compatibility, misleading
+// withholding statements, and stale prospect selection. Fix 1 and Fix 2 are
+// covered by the two tests above and are unchanged.
+// ---------------------------------------------------------------------------
+
+test('commercial figures accepts unambiguous grouped and coded monetary formats', () => {
+  const grouped = runIsolatedJarvis(
+    prospectFixture({ problem: 'p', price: 'R1,500.50', cost: 'R1,500' }),
+    'commercial figures\n'
+  );
+  assert.equal(grouped.result.status, 0, 'stdout: ' + grouped.result.stdout + '\nstderr: ' + grouped.result.stderr);
+  assert.match(grouped.result.stdout ?? '', /Contribution: 0\.5 ZAR/);
+  assert.match(grouped.result.stdout ?? '', /contribution = price - cost = 1500\.5 - 1500 = 0\.5 ZAR/);
+
+  const coded = runIsolatedJarvis(
+    prospectFixture({ problem: 'p', price: 'ZAR 15000', cost: 'R 9000' }),
+    'commercial figures\n'
+  );
+  assert.equal(coded.result.status, 0);
+  assert.match(coded.result.stdout ?? '', /Contribution: 6000 ZAR/);
+});
+
+test('commercial figures rejects ambiguous, malformed or negative amounts instead of guessing', () => {
+  const cases = [
+    ['R150 or R200', 'two amounts'],
+    ['R150-R200', 'a range'],
+    ['R150 per hour', 'a rate'],
+    ['R1,50', 'malformed digit grouping'],
+    ['-R150', 'a negative value'],
+    ['15000 9000', 'two bare numbers'],
+    ['R15000.50.10', 'a malformed decimal']
+  ];
+
+  for (const [value, label] of cases) {
+    const { result } = runIsolatedJarvis(
+      prospectFixture({ problem: 'p', price: value, cost: 'R50' }),
+      'commercial figures\n'
+    );
+    const stdout = result.stdout ?? '';
+    assert.equal(result.status, 0, label);
+    assert.match(stdout, /Contribution: NOT CALCULATED/, label + ' [' + value + ']');
+    assert.match(stdout, /is not a single unambiguous non-negative amount/, label + ' [' + value + ']');
+    assert.doesNotMatch(stdout, /contribution = price - cost/, label + ' [' + value + ']');
+  }
+});
+
+test('commercial figures refuses a contribution across mismatched or unrecorded currencies', () => {
+  const mismatch = runIsolatedJarvis(
+    prospectFixture({ problem: 'p', price: 'R15000', cost: '$9000' }),
+    'commercial figures\n'
+  );
+  assert.equal(mismatch.result.status, 0);
+  assert.match(mismatch.result.stdout ?? '', /Contribution: NOT CALCULATED/);
+  assert.match(mismatch.result.stdout ?? '', /recorded price is in ZAR and the recorded cost is in USD/);
+  assert.doesNotMatch(mismatch.result.stdout ?? '', /contribution = price - cost/);
+
+  const unrecorded = runIsolatedJarvis(
+    prospectFixture({ problem: 'p', price: 15000, cost: 9000 }),
+    'commercial figures\n'
+  );
+  assert.equal(unrecorded.result.status, 0);
+  assert.match(unrecorded.result.stdout ?? '', /Contribution: NOT CALCULATED/);
+  assert.match(unrecorded.result.stdout ?? '', /currency of the recorded price and cost is not recorded/);
+  assert.doesNotMatch(unrecorded.result.stdout ?? '', /contribution = price - cost/);
+
+  const halfRecorded = runIsolatedJarvis(
+    prospectFixture({ problem: 'p', price: 'R15000', cost: '9000' }),
+    'commercial figures\n'
+  );
+  assert.equal(halfRecorded.result.status, 0);
+  assert.match(halfRecorded.result.stdout ?? '', /currency of the recorded price and cost is not recorded/);
+  assert.doesNotMatch(halfRecorded.result.stdout ?? '', /contribution = price - cost/);
+});
+
+test('commercial figures preserves and labels a legitimate negative contribution', () => {
+  const { result } = runIsolatedJarvis(
+    prospectFixture({ problem: 'p', price: 'R100', cost: 'R250' }),
+    'commercial figures\n'
+  );
+
+  assert.equal(result.status, 0);
+  assert.match(result.stdout ?? '', /Contribution: -150 ZAR/);
+  assert.match(result.stdout ?? '', /contribution = price - cost = 100 - 250 = -150 ZAR/);
+  assert.match(result.stdout ?? '', /this contribution is negative/);
+});
+
+test('commercial figures reports a recorded timeline as a fact instead of claiming it is missing', () => {
+  const recorded = runIsolatedJarvis(
+    prospectFixture({ problem: 'p', timeline: 'Within 30 days' }),
+    'commercial figures timeline\n'
+  );
+  assert.equal(recorded.result.status, 0);
+  const recordedOut = recorded.result.stdout ?? '';
+  assert.match(
+    recordedOut,
+    /A recorded timeline exists \(Within 30 days\), but it is a recorded fact, not a supported recommendation\./
+  );
+  assert.doesNotMatch(recordedOut, /No timeline figure can be stated from the recorded evidence/);
+
+  const absent = runIsolatedJarvis(
+    prospectFixture({ problem: 'p' }),
+    'commercial figures timeline\n'
+  );
+  assert.equal(absent.result.status, 0);
+  const absentOut = absent.result.stdout ?? '';
+  assert.match(absentOut, /No timeline figure can be stated from the recorded evidence\./);
+  assert.doesNotMatch(absentOut, /A recorded timeline exists/);
+});
+
+test('commercial figures fails closed on missing, ambiguous or stale prospect selection', () => {
+  const openRobert = { name: 'Robert', status: 'NEW', discovery: { problem: 'p', price: 'R15000', cost: 'R9000' } };
+  const openAlice = { name: 'Alice', status: 'NEW', discovery: { problem: 'q', price: 'R100', cost: 'R40' } };
+  const closedGhost = { name: 'Ghost', status: 'CLOSED', discovery: { problem: 'z', price: 'R999999', cost: 'R1' } };
+  const blank = { opportunities: [], offers: [], followUps: [], revenue: [] };
+
+  const none = runIsolatedJarvis({ prospects: [], ...blank }, 'commercial figures\n');
+  assert.equal(none.result.status, 0);
+  assert.match(none.result.stdout ?? '', /No open prospect is recorded\./);
+  assert.doesNotMatch(none.result.stdout ?? '', /Contribution: \d/);
+
+  const unselected = runIsolatedJarvis({ prospects: [openRobert, openAlice], ...blank }, 'commercial figures\n');
+  assert.equal(unselected.result.status, 0);
+  assert.match(unselected.result.stdout ?? '', /More than one open prospect is recorded and none is selected\./);
+  assert.doesNotMatch(unselected.result.stdout ?? '', /contribution = price - cost/);
+
+  const stale = runIsolatedJarvis(
+    { prospects: [closedGhost, openRobert], selectedProspectName: 'Ghost', ...blank },
+    'commercial figures\n'
+  );
+  assert.equal(stale.result.status, 0);
+  assert.match(stale.result.stdout ?? '', /saved prospect selection does not match an open prospect/);
+  assert.doesNotMatch(stale.result.stdout ?? '', /contribution = price - cost/);
+  assert.doesNotMatch(stale.result.stdout ?? '', /Contribution: \d/);
+
+  const duplicate = runIsolatedJarvis(
+    { prospects: [openRobert, { name: 'Robert', status: 'NEW', discovery: openAlice.discovery }], selectedProspectName: 'Robert', ...blank },
+    'commercial figures\n'
+  );
+  assert.equal(duplicate.result.status, 0);
+  assert.match(duplicate.result.stdout ?? '', /More than one open prospect shares the saved name/);
+  assert.doesNotMatch(duplicate.result.stdout ?? '', /contribution = price - cost/);
+
+  const selected = runIsolatedJarvis(
+    { prospects: [openRobert, openAlice], selectedProspectName: 'Alice', ...blank },
+    'commercial figures\n'
+  );
+  assert.equal(selected.result.status, 0);
+  assert.match(selected.result.stdout ?? '', /Prospect: Alice/);
+  assert.match(selected.result.stdout ?? '', /Contribution: 60 ZAR/);
+  assert.doesNotMatch(selected.result.stdout ?? '', /Contribution: 6000/);
+});
+
+test('commercial figures does not satisfy qualification or bypass founder approval', () => {
+  const { result } = runIsolatedJarvis(
+    prospectFixture({
+      problem: 'Manual customer follow-up is consuming staff time',
+      impact: 'Staff spend 10 hours per week chasing responses',
+      currentSolution: 'Staff use spreadsheets and manual messages',
+      desiredOutcome: 'Automate routine follow-up and tracking',
+      decisionMaker: 'Operations manager',
+      price: 'R15000',
+      cost: 'R9000'
+    }),
+    'commercial figures\ncycle\n'
+  );
+
+  const stdout = result.stdout ?? '';
+  assert.equal(result.status, 0);
+  assert.match(stdout, /Qualification: NOT CHECKED/);
+  assert.match(stdout, /This is an evidence calculation only\. It is not a commercial recommendation and does not replace qualification or Zayn's approval\./);
+  assert.match(stdout, /External action: BLOCKED/);
+  assert.match(stdout, /No commercial recommendation was made/);
+
+  // Only the standalone evidence calculation may state a contribution; the
+  // blocked run-cycle path must not produce one.
+  const derivations = stdout.split('\n').filter(line => /contribution = price - cost/.test(line));
+  assert.equal(derivations.length, 1, 'the blocked cycle must not emit a contribution');
+  const cycleSection = stdout.slice(stdout.indexOf('COFOUNDER BUSINESS CYCLE'));
+  assert.doesNotMatch(cycleSection, /contribution = price - cost/);
+});
+
+test('commercial figures leaves protected state unchanged and triggers no external work', () => {
+  const fixture = prospectFixture({
+    problem: 'Manual customer follow-up is consuming staff time',
+    price: 'R15000',
+    cost: 'R9000'
+  });
+
+  const { result, protectedFiles, researchCalls } = runIsolatedJarvis(fixture, 'commercial figures\n');
+
+  assert.equal(result.status, 0);
+  assert.match(result.stdout ?? '', /Contribution: 6000 ZAR/);
+  assert.equal(
+    protectedFiles['business.json'],
+    JSON.stringify(fixture, null, 2),
+    'business.json must be byte-identical after a read-only figure request'
+  );
+  assert.equal(
+    protectedFiles['cofounder-state.json'],
+    JSON.stringify({ goals: [], decisions: [], approvals: [], executions: [], lessons: [] }, null, 2),
+    'cofounder-state.json must be byte-identical after a read-only figure request'
+  );
+  assert.equal(researchCalls, 0, 'no research tool must be invoked');
+  assert.doesNotMatch(result.stdout ?? '', /COFOUNDER > Thinking/);
+  assert.doesNotMatch(result.stdout ?? '', /AI request failed/);
+});

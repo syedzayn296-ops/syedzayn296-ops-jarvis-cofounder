@@ -1387,6 +1387,8 @@ function showProspectIntelligence() {
         ["Decision maker", discovery.decisionMaker],
         ["Budget", discovery.budget],
         ["Timeline", discovery.timeline],
+        ["Price", discovery.price],
+        ["Cost", discovery.cost],
         ["Notes", discovery.notes]
     ];
 
@@ -1530,6 +1532,10 @@ function showProspectIntelligence() {
         console.log("Confidence:", recommendation.confidence);
         console.log("Next action:", recommendation.nextAction);
         console.log("Approval:", recommendation.approval);
+
+        console.log("\nCOMMERCIAL FIGURES");
+        console.log("------------------");
+        buildCommercialFigureLines(discovery).lines.forEach(line => console.log(line));
     }
 
     console.log("\nQUALIFICATION");
@@ -2290,6 +2296,7 @@ function buildCofounderMessage(prompt) {
         "For commercial or strategic decisions, run an internal advisory board before answering: Commercial Strategist assesses cash flow, time-to-revenue, pricing and the route to a buyer; Customer/Market Analyst checks the buyer problem, demand evidence, alternatives and access to decision-makers; Sceptic/Risk Adviser challenges assumptions, hidden costs, delivery risk and reasons to kill the idea; Chair reconciles disagreements and chooses the best next move.",
         "For competing opportunities, compare likelihood of payment, time to first cash, cost to test, repeatability, owned-asset value and strategic fit. State the evidence and uncertainty behind the comparison; do not invent scores or claim research that was not actually performed.",
         "Return one ranked recommendation, the strongest reason against it, the most important unknown, a clear kill criterion, and the cheapest next validation step. Do not perform theatrical multi-agent dialogue unless asked; show concise conclusions and preserve founder approval for external actions.",
+        "NUMERICAL EVIDENCE DISCIPLINE: Use only figures supplied in this conversation and valid calculations from them. Never invent or infer budget amounts, budget percentages, spending limits, statistics, benchmarks, sample sizes, timelines, conversion rates, numerical thresholds or any other unsupported quantitative recommendation. Do not introduce illustrative numerical placeholders, even when labelled illustrative, if the user has prohibited invented numbers; offer estimates only when the user explicitly authorises them. An available budget is not permission to spend it and never implies approval for spending. If the evidence cannot establish a numerical threshold or budget allocation, say so explicitly and offer a qualitative alternative instead.",
         "Discover first. Qualify second. Recommend third. Execute only after Zayn approves.",
         "",
         getCofounderContext(),
@@ -3921,6 +3928,10 @@ if (input === "run cycle" || input === "cycle") {
         console.log("Commercial unknowns: none");
     }
 
+    console.log("COMMERCIAL FIGURES");
+    console.log("------------------");
+    buildCommercialFigureLines(d).lines.forEach(line => console.log(line));
+
     console.log("");
 
     const cofounderState = JSON.parse(fs.readFileSync("cofounder-state.json", "utf8"));
@@ -3970,6 +3981,10 @@ if (input === "run cycle" || input === "cycle") {
     return;
 }
 if (input === "commercial assessment") { commercialAssessment(); return; }
+if (lower === "commercial figures" || lower.startsWith("commercial figures ")) {
+    commercialFigures(trimmed.slice("commercial figures".length).trim());
+    return;
+}
 if (input === "commercial brain" || input === "commercial") { commercialBrain.analyze(); return; }
 
   // MEMORY
@@ -4163,12 +4178,14 @@ if (input === "commercial brain" || input === "commercial") { commercialBrain.an
             maker: "decisionMaker",
             budget: "budget",
             timeline: "timeline",
+            price: "price",
+            cost: "cost",
             notes: "notes"
         };
 
         if (!fieldMap[field]) {
             console.log("JARVIS > Unknown discovery field.");
-            console.log("Use: problem, impact, current, outcome, decision, budget, timeline or notes.");
+            console.log("Use: problem, impact, current, outcome, decision, budget, timeline, price, cost or notes.");
             return true;
         }
 
@@ -5129,6 +5146,237 @@ console.log("");console.log("COMMERCIAL RULE");
 
 
 
+// --------------------------------------------------
+// EVIDENCE-BOUNDED COMMERCIAL FIGURES
+// The deterministic commercial workflow may only state a figure that is
+// traceable to a recorded discovery field (or an explicitly supplied figure).
+// It never invents or extrapolates budget percentages, sample sizes, prospect
+// counts, conversion targets, benchmarks, timelines or kill thresholds. These
+// helpers are deliberately narrow: they compare recorded inputs and otherwise
+// withhold, rather than scanning or interpreting free-form text.
+// --------------------------------------------------
+
+const WITHHELD_FIGURE_ORDER = [
+    "budget percentage",
+    "sample size",
+    "prospect count",
+    "conversion target",
+    "benchmark",
+    "timeline figure",
+    "kill threshold"
+];
+
+const WITHHELD_FIGURE_ALIASES = Object.freeze({
+    "budget percentage": "budget percentage",
+    "budget percent": "budget percentage",
+    "budget allocation": "budget percentage",
+    "sample size": "sample size",
+    "prospect count": "prospect count",
+    "prospect counts": "prospect count",
+    "conversion target": "conversion target",
+    "conversion rate": "conversion target",
+    "benchmark": "benchmark",
+    "timeline": "timeline figure",
+    "timeline figure": "timeline figure",
+    "kill threshold": "kill threshold",
+    "threshold": "kill threshold"
+});
+
+// A withheld request for one of these quantities has a matching recorded
+// discovery fact, when one exists. The fact is reported as a fact; its absence
+// is never assumed.
+const WITHHELD_FIGURE_SOURCE_FIELDS = Object.freeze({
+    "timeline": "timeline",
+    "timeline figure": "timeline",
+    "budget percentage": "budget",
+    "budget percent": "budget",
+    "budget allocation": "budget"
+});
+
+const CURRENCY_TOKENS = [
+    { code: "ZAR", pattern: /^(?:ZAR|R)\s*/i },
+    { code: "USD", pattern: /^(?:USD|\$)\s*/i },
+    { code: "EUR", pattern: /^(?:EUR|€)\s*/i },
+    { code: "GBP", pattern: /^(?:GBP|£)\s*/i }
+];
+
+// Exactly one amount, optionally preceded by a currency symbol or code.
+const SINGLE_AMOUNT_PATTERN = /^(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?$/;
+
+// Reads a single amount from a recorded discovery field. It accepts one
+// unambiguous, non-negative amount optionally prefixed by a currency symbol or
+// code. Ranges, alternatives, rates, units, partial numbers, negative values and
+// malformed digit grouping are rejected instead of being silently truncated to
+// their first number. It never searches a free-form response.
+function parseRecordedFigure(value) {
+    if (typeof value === "number") {
+        return Number.isFinite(value) && value >= 0 ? { amount: value, currency: null } : null;
+    }
+    if (typeof value !== "string") return null;
+
+    let text = value.trim();
+    if (!text) return null;
+
+    let currency = null;
+    for (const token of CURRENCY_TOKENS) {
+        if (token.pattern.test(text)) {
+            currency = token.code;
+            text = text.replace(token.pattern, "");
+            break;
+        }
+    }
+
+    if (!SINGLE_AMOUNT_PATTERN.test(text)) return null;
+
+    const amount = Number(text.replace(/,/g, ""));
+    if (!Number.isFinite(amount) || amount < 0) return null;
+
+    return { amount, currency };
+}
+
+function readRecordedAmount(value) {
+    if (value === null || value === undefined) return { state: "absent" };
+    if (typeof value === "string" && !value.trim()) return { state: "absent" };
+    const parsed = parseRecordedFigure(value);
+    return parsed ? { state: "ok", amount: parsed.amount, currency: parsed.currency } : { state: "unusable" };
+}
+
+// Contribution is only permitted when both recorded inputs are single,
+// unambiguous, non-negative amounts recorded in the same currency.
+function resolveRecordedContribution(discovery = {}) {
+    const price = readRecordedAmount(discovery.price);
+    const cost = readRecordedAmount(discovery.cost);
+    const missing = [];
+
+    if (price.state === "absent") missing.push("price");
+    if (cost.state === "absent") missing.push("cost");
+
+    if (missing.length > 0) {
+        return {
+            status: "EVIDENCE MISSING",
+            contribution: null,
+            currency: null,
+            derivation: null,
+            missing,
+            statement:
+                "Contribution not calculated. Missing recorded evidence: " +
+                missing.join(", ") +
+                ". Record the " + missing.join(" and ") +
+                " before requesting a commercial figure."
+        };
+    }
+
+    const unusable = [];
+    if (price.state === "unusable") unusable.push("price");
+    if (cost.state === "unusable") unusable.push("cost");
+
+    if (unusable.length > 0) {
+        return {
+            status: "EVIDENCE UNUSABLE",
+            contribution: null,
+            currency: null,
+            derivation: null,
+            missing: [],
+            statement:
+                "Contribution not calculated. The recorded " +
+                unusable.join(" and ") +
+                " is not a single unambiguous non-negative amount, so it has been rejected rather than guessed."
+        };
+    }
+
+    if (price.currency === null || cost.currency === null) {
+        return {
+            status: "CURRENCY NOT RECORDED",
+            contribution: null,
+            currency: null,
+            derivation: null,
+            missing: [],
+            statement:
+                "Contribution not calculated. The currency of the recorded price and cost is not recorded, and a currency will not be invented."
+        };
+    }
+
+    if (price.currency !== cost.currency) {
+        return {
+            status: "CURRENCY MISMATCH",
+            contribution: null,
+            currency: null,
+            derivation: null,
+            missing: [],
+            statement:
+                "Contribution not calculated. The recorded price is in " + price.currency +
+                " and the recorded cost is in " + cost.currency +
+                "; a contribution requires one recorded currency."
+        };
+    }
+
+    const currency = price.currency;
+    const contribution = price.amount - cost.amount;
+
+    return {
+        status: "DERIVED FROM RECORDED EVIDENCE",
+        contribution,
+        currency,
+        derivation:
+            "contribution = price - cost = " + price.amount + " - " + cost.amount +
+            " = " + contribution + " " + currency,
+        missing: [],
+        statement: null
+    };
+}
+
+// Fixed deterministic refusal for quantities the evidence cannot establish.
+// A recorded discovery fact is reported as a fact, never claimed to be missing.
+function describeWithheldFigure(category, discovery = {}) {
+    const key = String(category || "").trim().toLowerCase().replace(/\s+/g, " ");
+    const label = WITHHELD_FIGURE_ALIASES[key];
+    if (!label) return null;
+
+    const sourceField = WITHHELD_FIGURE_SOURCE_FIELDS[key];
+    const recorded = sourceField ? discovery[sourceField] : null;
+
+    if (sourceField && recorded) {
+        return (
+            "A recorded " + sourceField + " exists (" + recorded + "), but it is a recorded fact, " +
+            "not a supported recommendation. No " + label + " is stated from it."
+        );
+    }
+
+    return "No " + label + " can be stated from the recorded evidence. Record the supporting evidence first; no figure has been invented.";
+}
+
+// The single, shared figure report used by every deterministic surface.
+function buildCommercialFigureLines(discovery = {}) {
+    const contribution = resolveRecordedContribution(discovery);
+    const lines = [];
+
+    if (contribution.contribution !== null) {
+        lines.push("Contribution: " + contribution.contribution + " " + contribution.currency);
+        lines.push("Derivation: " + contribution.derivation);
+        if (contribution.contribution < 0) {
+            lines.push("Note: the recorded cost exceeds the recorded price, so this contribution is negative.");
+        }
+    } else {
+        lines.push("Contribution: NOT CALCULATED");
+        lines.push("Reason: " + contribution.statement);
+    }
+
+    // Recorded facts are reported as recorded facts, never as recommendations,
+    // and are never treated as absent.
+    if (discovery.timeline) {
+        lines.push("Recorded timeline (a recorded fact, not a recommendation): " + discovery.timeline);
+    }
+    if (discovery.budget) {
+        lines.push("Recorded budget (a recorded fact, not an approved spend): " + discovery.budget);
+    }
+
+    lines.push(
+        "Not stated without supporting evidence (recommendation figures): " + WITHHELD_FIGURE_ORDER.join(", ")
+    );
+
+    return { contribution, lines };
+}
+
 function buildCommercialRecommendation(prospect, offers) {
     const discovery = prospect.discovery || {};
     const problemText = (discovery.problem || "").toLowerCase();
@@ -5163,6 +5411,7 @@ function buildCommercialRecommendation(prospect, offers) {
         alternativeOffer: alternative ? alternative.offer.name : null,
         alternativeOutcome: alternative ? alternative.offer.outcome : null,
         unknowns,
+        contribution: resolveRecordedContribution(discovery),
         approvalRequired: true,
         externalActionAllowed: false
     };
@@ -5395,6 +5644,101 @@ function commercialAssessment() {
     console.log("RISK: " + risk);
     console.log("JUDGEMENT: " + judgement);
     console.log("NEXT ACTION: " + nextAction);
+    console.log("External action: BLOCKED");
+    console.log("");
+}
+
+// DETERMINISTIC NUMERICAL-COMMERCIAL WORKFLOW
+// This is the only place the app answers a request for a commercial figure.
+// It derives a contribution from recorded price and cost, and otherwise returns
+// a fixed statement. It never inspects or rewrites free-form AI answers, and it
+// never writes business state.
+//
+// Prospect selection fails closed. Unlike the dashboard views, a stale saved
+// selection does not silently fall back to the only open prospect, so the
+// command cannot present one prospect's financial data as another's.
+function resolveFigureProspect(businessState) {
+    const prospects = Array.isArray(businessState && businessState.prospects) ? businessState.prospects : [];
+    const open = prospects.filter(item => item.status !== "CLOSED");
+    const selectedName = String((businessState && businessState.selectedProspectName) || "").trim();
+
+    if (open.length === 0) return { prospect: null, reason: "no-open-prospect" };
+
+    if (selectedName) {
+        const matches = open.filter(
+            item => String(item.name || "").trim().toLowerCase() === selectedName.toLowerCase()
+        );
+        if (matches.length === 1) return { prospect: matches[0], reason: "selected" };
+        if (matches.length > 1) return { prospect: null, reason: "ambiguous-selection" };
+        return { prospect: null, reason: "stale-selection" };
+    }
+
+    if (open.length === 1) return { prospect: open[0], reason: "single-open-prospect" };
+    return { prospect: null, reason: "no-selection" };
+}
+
+function describeProspectResolution(reason) {
+    switch (reason) {
+        case "no-open-prospect":
+            return "No open prospect is recorded.";
+        case "no-selection":
+            return "More than one open prospect is recorded and none is selected.";
+        case "ambiguous-selection":
+            return "More than one open prospect shares the saved name, so none was selected.";
+        case "stale-selection":
+            return "The saved prospect selection does not match an open prospect, so none was selected.";
+        default:
+            return "No active prospect could be resolved.";
+    }
+}
+
+function commercialFigures(category) {
+    const businessState = JSON.parse(fs.readFileSync("business.json", "utf8"));
+    const resolution = resolveFigureProspect(businessState);
+    const discovery = resolution.prospect ? (resolution.prospect.discovery || {}) : {};
+
+    console.log("");
+    console.log("JARVIS COMMERCIAL FIGURES");
+    console.log("=========================");
+
+    if (category) {
+        const statement = describeWithheldFigure(category, discovery);
+        const key = String(category).trim().toLowerCase().replace(/\s+/g, " ");
+
+        console.log("Figure requested: " + (WITHHELD_FIGURE_ALIASES[key] || category));
+
+        if (!statement) {
+            console.log("Unsupported figure request. No commercial figure was produced.");
+            console.log("Supported quantities: " + WITHHELD_FIGURE_ORDER.join(", "));
+            console.log("External action: BLOCKED");
+            console.log("");
+            return;
+        }
+
+        console.log(statement);
+        console.log("External action: BLOCKED");
+        console.log("");
+        return;
+    }
+
+    if (!resolution.prospect) {
+        console.log("Prospect: none selected");
+        console.log(describeProspectResolution(resolution.reason));
+        console.log("Use: select prospect <exact name>");
+        console.log("Contribution: NOT CALCULATED");
+        console.log("Not stated without supporting evidence (recommendation figures): " + WITHHELD_FIGURE_ORDER.join(", "));
+        console.log("External action: BLOCKED");
+        console.log("");
+        return;
+    }
+
+    const prospect = resolution.prospect;
+    const qualification = prospect.qualification || {};
+
+    console.log("Prospect: " + (prospect.name || "Unknown"));
+    console.log("Qualification: " + (qualification.status || "NOT CHECKED"));
+    buildCommercialFigureLines(discovery).lines.forEach(line => console.log(line));
+    console.log("This is an evidence calculation only. It is not a commercial recommendation and does not replace qualification or Zayn's approval.");
     console.log("External action: BLOCKED");
     console.log("");
 }
