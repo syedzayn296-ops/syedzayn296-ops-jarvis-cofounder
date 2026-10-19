@@ -5,8 +5,9 @@
 
 - **Repository:** https://github.com/syedzayn296-ops/syedzayn296-ops-jarvis-cofounder
 - **Working branch for the current code line:** `cofounder-development-sync`
-- **Current head (verified 2026-10-20, local working copy):** `f98f7805ce3027dd22143bb55adabf66c72dd6f5` ("ci: add cofounder-development-sync to workflow push triggers (G6)").
+- **Current head (verified 2026-10-20 00:46:03 +02:00, local working copy):** `074d7f202c0d90f3d1c8986fa7f5fa2b10493100` ("docs: reconcile Cofounder hub with release candidate").
 - **Local working copy:** `C:\Users\ZAYZA\Cofounder-Release-Candidate`
+- **G9 verification:** dated snapshot; see [G9 acceptance clarification](G9-ACCEPTANCE-CLARIFICATION.md).
 - **Operating principle:** Discover first. Qualify second. Recommend third. Execute only after Zayn approves.  
 **Active cleanup task:** [Issue #4 — Reconcile local patch and verify provider routing](https://github.com/syedzayn296-ops/syedzayn296-ops-jarvis-cofounder/issues/4).
 
