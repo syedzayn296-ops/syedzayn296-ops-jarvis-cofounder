@@ -1,12 +1,12 @@
 # Cofounder Project Hub
 
-**Last updated:** 2026-10-15  
+**Last updated:** 2026-10-20  
 **Purpose:** One durable, phone-accessible home for Cofounder status, decisions, research pointers, safeguards, and next actions. This file is the first page to read when resuming work.
 
 - **Repository:** https://github.com/syedzayn296-ops/syedzayn296-ops-jarvis-cofounder
 - **Working branch for the current code line:** `cofounder-development-sync`
-- **Current head (verified 2026-10-19, local working copy):** `2e9c0598ebe5d0bd9c022c7843bed858fdf90aa2` ("Harden state-file read hygiene").
-- **Local working copy:** `C:\Users\ZAYZA\JARVIS-Cofounder-Clean`
+- **Current head (verified 2026-10-20, local working copy):** `f98f7805ce3027dd22143bb55adabf66c72dd6f5` ("ci: add cofounder-development-sync to workflow push triggers (G6)").
+- **Local working copy:** `C:\Users\ZAYZA\Cofounder-Release-Candidate`
 - **Operating principle:** Discover first. Qualify second. Recommend third. Execute only after Zayn approves.  
 **Active cleanup task:** [Issue #4 — Reconcile local patch and verify provider routing](https://github.com/syedzayn296-ops/syedzayn296-ops-jarvis-cofounder/issues/4).
 
