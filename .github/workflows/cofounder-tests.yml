@@ -19,4 +19,4 @@ jobs:
       - name: Check JavaScript syntax
         run: node --check index.js
       - name: Run smoke and regression tests
-        run: node --test --test-reporter=spec test/jarvis-smoke.test.js
+        run: node --test --test-reporter=spec test/jarvis-smoke.test.js test/state-durability.test.js test/state-store-exclusive-create.test.js test/state-store-transaction.test.js
