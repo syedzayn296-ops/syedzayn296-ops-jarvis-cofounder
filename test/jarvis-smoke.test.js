@@ -13,6 +13,7 @@ function runIsolatedJarvis(business, input, state = {}, options = {}) {
 
   try {
     fs.copyFileSync(indexFile, path.join(tempDir, 'index.js'));
+    fs.copyFileSync(path.join(repoRoot, 'state-store.js'), path.join(tempDir, 'state-store.js'));
     fs.writeFileSync(
       path.join(tempDir, 'business.json'),
       JSON.stringify(business, null, 2)
@@ -134,6 +135,12 @@ function runIsolatedJarvis(business, input, state = {}, options = {}) {
       const filePath = path.join(tempDir, name);
       protectedFiles[name] = fs.existsSync(filePath) ? fs.readFileSync(filePath, 'utf8') : null;
     }
+    const directoryListing = fs.readdirSync(tempDir).sort();
+    const backupFiles = {};
+    for (const name of directoryListing) {
+      if (!name.endsWith('.bak')) continue;
+      backupFiles[name] = fs.readFileSync(path.join(tempDir, name), 'utf8');
+    }
     return {
       result,
       business: fs.existsSync(path.join(tempDir, 'business.json'))
@@ -151,7 +158,9 @@ function runIsolatedJarvis(business, input, state = {}, options = {}) {
       researchCalls: fs.existsSync(path.join(tempDir, 'research-calls.txt'))
         ? fs.readFileSync(path.join(tempDir, 'research-calls.txt'), 'utf8').split('\n').filter(Boolean).length
         : 0,
-      protectedFiles
+      protectedFiles,
+      directoryListing,
+      backupFiles
     };
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
@@ -709,6 +718,166 @@ test('editing discovery impact invalidates prior buyer confirmation', () => {
   assert.equal(business.prospects[0].qualification.confirmationSource, undefined);
 });
 
+test('RC-04 discovery impact refuses stale saved prospect selection', () => {
+  const qualification = {
+    status: 'READY FOR CONFIRMATION',
+    checkedAt: '2026-01-01T00:00:00.000Z',
+    missing: [],
+    marker: 'IMPACT_MARKER',
+    note: 'EXISTING_IMPACT_NOTE',
+    confirmationSource: 'PREEXISTING_SOURCE'
+  };
+  const closedProspect = {
+    name: 'Closed Prospect',
+    details: 'Synthetic closed record',
+    status: 'CLOSED',
+    discovery: { problem: 'CLOSED_PROBLEM' }
+  };
+  const openProspect = {
+    name: 'Remaining Open',
+    details: 'Synthetic open record',
+    status: 'NEW',
+    discovery: {
+      problem: 'ORIGINAL_PROBLEM',
+      impact: 'ORIGINAL_IMPACT'
+    },
+    qualification
+  };
+  const business = {
+    prospects: [closedProspect, openProspect],
+    opportunities: [],
+    offers: [],
+    followUps: [],
+    revenue: [],
+    selectedProspectName: 'Closed Prospect'
+  };
+  const businessBytes = JSON.stringify(business, null, 2);
+  const settingsBytes = JSON.stringify({ speechEnabled: false }, null, 2);
+  const stateBytes = JSON.stringify({
+    goals: [],
+    decisions: [],
+    approvals: [],
+    executions: [],
+    lessons: [],
+    research: []
+  }, null, 2);
+  const emptyArrayBytes = '[]';
+
+  const run = runIsolatedJarvis(
+    business,
+    'discovery impact INJECTED_VALUE\n',
+    {},
+    {
+      seedProtectedFiles: {
+        'cofounder-settings.json': settingsBytes,
+        'cofounder-state.json': stateBytes,
+        'memory.json': emptyArrayBytes,
+        'tasks.json': emptyArrayBytes,
+        'reminders.json': emptyArrayBytes
+      }
+    }
+  );
+
+  const stdout = run.result.stdout ?? '';
+  assert.equal(run.result.status, 0);
+  assert.match(stdout, /The saved prospect selection does not match an open prospect, so none was selected\./);
+  assert.match(stdout, /Use: select prospect <exact name>/);
+  assert.doesNotMatch(stdout, /DISCOVERY CAPTURED/);
+  assert.doesNotMatch(stdout, /Impact: INJECTED_VALUE/);
+  assert.doesNotMatch(stdout, /Qualification invalidated because discovery changed/);
+
+  assert.equal(run.protectedFiles['business.json'], businessBytes);
+  assert.deepEqual(run.business, business);
+  const remaining = run.business.prospects.find(item => item.name === 'Remaining Open');
+  assert.deepEqual(remaining.discovery, {
+    problem: 'ORIGINAL_PROBLEM',
+    impact: 'ORIGINAL_IMPACT'
+  });
+  assert.deepEqual(remaining.qualification, qualification);
+  assert.equal(run.business.selectedProspectName, 'Closed Prospect');
+  assert.deepEqual(
+    run.business.prospects.find(item => item.name === 'Closed Prospect'),
+    closedProspect
+  );
+
+  const protectedExpectations = {
+    'cofounder-state.json': stateBytes,
+    'memory.json': emptyArrayBytes,
+    'tasks.json': emptyArrayBytes,
+    'reminders.json': emptyArrayBytes,
+    'cofounder-settings.json': settingsBytes
+  };
+  for (const [name, expected] of Object.entries(protectedExpectations)) {
+    assert.equal(run.protectedFiles[name], expected, name + ' must remain byte-identical');
+  }
+
+  const businessBackups = run.directoryListing.filter(name => /^business\.json\..*\.bak$/.test(name));
+  assert.deepEqual(businessBackups, [], 'the refused command must not create a business backup');
+  assert.equal(run.directoryListing.includes('.cofounder-state.lock'), false, 'the writer lock must be released');
+
+  const settingsBackups = run.directoryListing.filter(name => /^cofounder-settings\.json\..*\.bak$/.test(name));
+  assert.equal(settingsBackups.length, 1, 'the only permitted backup is the known startup settings backup');
+  assert.equal(run.backupFiles[settingsBackups[0]], settingsBytes);
+});
+
+test('RC-04 discovery impact preserves single-open auto-selection', () => {
+  const qualification = {
+    status: 'READY FOR CONFIRMATION',
+    checkedAt: '2026-01-01T00:00:00.000Z',
+    missing: [],
+    marker: 'IMPACT_MARKER',
+    note: 'EXISTING_IMPACT_NOTE'
+  };
+  const business = {
+    prospects: [
+      {
+        name: 'Remaining Open',
+        details: 'Synthetic open record',
+        status: 'NEW',
+        discovery: {
+          problem: 'ORIGINAL_PROBLEM',
+          impact: 'ORIGINAL_IMPACT'
+        },
+        qualification
+      }
+    ],
+    opportunities: [],
+    offers: [],
+    followUps: [],
+    revenue: []
+  };
+
+  const run = runIsolatedJarvis(business, 'discovery impact CONTROL_VALUE\n');
+  const stdout = run.result.stdout ?? '';
+  assert.equal(run.result.status, 0);
+  assert.match(stdout, /DISCOVERY CAPTURED/);
+  assert.match(stdout, /Impact: CONTROL_VALUE/);
+  assert.match(stdout, /Qualification invalidated because discovery changed/);
+  assert.doesNotMatch(stdout, /The saved prospect selection does not match an open prospect/);
+  assert.doesNotMatch(stdout, /Use: select prospect <exact name>/);
+
+  const remaining = run.business.prospects[0];
+  assert.equal(remaining.discovery.problem, 'ORIGINAL_PROBLEM');
+  assert.equal(remaining.discovery.impact, 'CONTROL_VALUE');
+  assert.equal(remaining.qualification.status, 'NEEDS RECONFIRMATION');
+  assert.deepEqual(remaining.qualification.missing, []);
+  assert.equal(
+    remaining.qualification.note,
+    'Discovery changed after qualification review; rerun qualification and reconfirm buyer evidence.'
+  );
+  assert.equal(remaining.qualification.confirmationSource, undefined);
+  assert.equal(typeof remaining.qualification.checkedAt, 'string');
+  assert.ok(remaining.qualification.checkedAt);
+  assert.equal(remaining.name, 'Remaining Open');
+  assert.equal(remaining.details, 'Synthetic open record');
+  assert.equal(remaining.status, 'NEW');
+  assert.equal(run.business.prospects.length, 1);
+  for (const key of ['opportunities', 'offers', 'followUps', 'revenue']) {
+    assert.deepEqual(run.business[key], business[key], key + ' must remain unchanged');
+  }
+  assert.equal(Object.prototype.hasOwnProperty.call(run.business, 'selectedProspectName'), false);
+});
+
 test('editing discovery current solution invalidates prior buyer confirmation', () => {
   const fixture = prospectFixture({
     problem: 'Original buyer-confirmed problem',
@@ -798,6 +967,883 @@ test('capture discovery advances to the next missing field instead of overwritin
   );
 });
 
+test('RC-04 next discovery refuses stale saved prospect selection', () => {
+  const qualification = {
+    status: 'READY FOR CONFIRMATION',
+    checkedAt: '2026-01-01T00:00:00.000Z',
+    missing: [],
+    marker: 'NEXT_DISCOVERY_MARKER',
+    note: 'EXISTING_NEXT_DISCOVERY_NOTE',
+    confirmationSource: 'PREEXISTING_SOURCE'
+  };
+  const closedProspect = {
+    name: 'Closed Prospect',
+    details: 'Synthetic closed record',
+    status: 'CLOSED',
+    discovery: { problem: 'CLOSED_PROBLEM' }
+  };
+  const openProspect = {
+    name: 'Remaining Open',
+    details: 'Synthetic open record',
+    status: 'NEW',
+    discovery: { problem: 'ORIGINAL_PROBLEM' },
+    currentDiscoveryField: 'timeline',
+    qualification
+  };
+  const business = {
+    prospects: [closedProspect, openProspect],
+    opportunities: [],
+    offers: [],
+    followUps: [],
+    revenue: [],
+    selectedProspectName: 'Closed Prospect'
+  };
+  const businessBytes = JSON.stringify(business, null, 2);
+  const settingsBytes = JSON.stringify({ speechEnabled: false }, null, 2);
+  const stateBytes = JSON.stringify({
+    goals: [],
+    decisions: [],
+    approvals: [],
+    executions: [],
+    lessons: [],
+    research: []
+  }, null, 2);
+  const emptyArrayBytes = '[]';
+
+  const run = runIsolatedJarvis(
+    business,
+    'next discovery\n',
+    {},
+    {
+      seedProtectedFiles: {
+        'cofounder-settings.json': settingsBytes,
+        'cofounder-state.json': stateBytes,
+        'memory.json': emptyArrayBytes,
+        'tasks.json': emptyArrayBytes,
+        'reminders.json': emptyArrayBytes
+      }
+    }
+  );
+
+  const stdout = run.result.stdout ?? '';
+  assert.equal(run.result.status, 0);
+  assert.match(stdout, /The saved prospect selection does not match an open prospect, so none was selected\./);
+  assert.match(stdout, /Use: select prospect <exact name>/);
+  assert.doesNotMatch(stdout, /NEXT DISCOVERY QUESTION/);
+  assert.doesNotMatch(stdout, /Roughly how many staff hours per week are being spent handling these customer enquiries\?/);
+  assert.doesNotMatch(stdout, /Discovery evidence is complete/);
+
+  assert.equal(run.protectedFiles['business.json'], businessBytes);
+  assert.deepEqual(run.business, business);
+  const remaining = run.business.prospects.find(item => item.name === 'Remaining Open');
+  assert.equal(remaining.currentDiscoveryField, 'timeline');
+  assert.deepEqual(remaining.discovery, { problem: 'ORIGINAL_PROBLEM' });
+  assert.deepEqual(remaining.qualification, qualification);
+  assert.equal(remaining.status, 'NEW');
+  assert.equal(remaining.name, 'Remaining Open');
+  assert.equal(remaining.details, 'Synthetic open record');
+  assert.equal(run.business.selectedProspectName, 'Closed Prospect');
+  assert.deepEqual(
+    run.business.prospects.find(item => item.name === 'Closed Prospect'),
+    closedProspect
+  );
+
+  const protectedExpectations = {
+    'cofounder-state.json': stateBytes,
+    'memory.json': emptyArrayBytes,
+    'tasks.json': emptyArrayBytes,
+    'reminders.json': emptyArrayBytes,
+    'cofounder-settings.json': settingsBytes
+  };
+  for (const [name, expected] of Object.entries(protectedExpectations)) {
+    assert.equal(run.protectedFiles[name], expected, name + ' must remain byte-identical');
+  }
+
+  const businessBackups = run.directoryListing.filter(name => /^business\.json\..*\.bak$/.test(name));
+  assert.deepEqual(businessBackups, [], 'the refused command must not create a business backup');
+  assert.equal(run.directoryListing.includes('.cofounder-state.lock'), false, 'the writer lock must be released');
+
+  const settingsBackups = run.directoryListing.filter(name => /^cofounder-settings\.json\..*\.bak$/.test(name));
+  assert.equal(settingsBackups.length, 1, 'the only permitted backup is the known startup settings backup');
+  assert.equal(run.backupFiles[settingsBackups[0]], settingsBytes);
+});
+
+test('RC-04 next discovery preserves single-open auto-selection', () => {
+  const qualification = {
+    status: 'READY FOR CONFIRMATION',
+    checkedAt: '2026-01-01T00:00:00.000Z',
+    missing: [],
+    marker: 'NEXT_DISCOVERY_MARKER',
+    note: 'EXISTING_NEXT_DISCOVERY_NOTE'
+  };
+  const business = {
+    prospects: [
+      {
+        name: 'Remaining Open',
+        details: 'Synthetic open record',
+        status: 'NEW',
+        discovery: { problem: 'ORIGINAL_PROBLEM' },
+        currentDiscoveryField: 'timeline',
+        qualification
+      }
+    ],
+    opportunities: [],
+    offers: [],
+    followUps: [],
+    revenue: []
+  };
+
+  const run = runIsolatedJarvis(business, 'next discovery\n');
+  const stdout = run.result.stdout ?? '';
+  assert.equal(run.result.status, 0);
+  assert.match(stdout, /NEXT DISCOVERY QUESTION/);
+  assert.match(stdout, /Roughly how many staff hours per week are being spent handling these customer enquiries\?/);
+  assert.doesNotMatch(stdout, /The saved prospect selection does not match an open prospect/);
+  assert.doesNotMatch(stdout, /Use: select prospect <exact name>/);
+
+  const remaining = run.business.prospects[0];
+  assert.equal(remaining.currentDiscoveryField, 'impact');
+  assert.equal(remaining.discovery.problem, 'ORIGINAL_PROBLEM');
+  assert.equal(Object.prototype.hasOwnProperty.call(remaining.discovery, 'impact'), false);
+  assert.deepEqual(remaining.qualification, qualification);
+  assert.equal(remaining.name, 'Remaining Open');
+  assert.equal(remaining.details, 'Synthetic open record');
+  assert.equal(remaining.status, 'NEW');
+  assert.equal(run.business.prospects.length, 1);
+  for (const key of ['opportunities', 'offers', 'followUps', 'revenue']) {
+    assert.deepEqual(run.business[key], business[key], key + ' must remain unchanged');
+  }
+  assert.equal(Object.prototype.hasOwnProperty.call(run.business, 'selectedProspectName'), false);
+});
+
+test('RC-04 capture discovery refuses stale saved prospect selection', () => {
+  const qualification = {
+    status: 'READY FOR CONFIRMATION',
+    checkedAt: '2026-01-01T00:00:00.000Z',
+    missing: [],
+    marker: 'CAPTURE_MARKER',
+    note: 'EXISTING_CAPTURE_NOTE',
+    confirmationSource: 'PREEXISTING_SOURCE'
+  };
+  const closedProspect = {
+    name: 'Closed Prospect',
+    details: 'Synthetic closed record',
+    status: 'CLOSED',
+    discovery: { problem: 'CLOSED_PROBLEM' }
+  };
+  const openProspect = {
+    name: 'Remaining Open',
+    details: 'Synthetic open record',
+    status: 'NEW',
+    discovery: { problem: 'ORIGINAL_PROBLEM' },
+    currentDiscoveryField: 'impact',
+    qualification
+  };
+  const business = {
+    prospects: [closedProspect, openProspect],
+    opportunities: [],
+    offers: [],
+    followUps: [],
+    revenue: [],
+    selectedProspectName: 'Closed Prospect'
+  };
+  const businessBytes = JSON.stringify(business, null, 2);
+  const settingsBytes = JSON.stringify({ speechEnabled: false }, null, 2);
+  const stateBytes = JSON.stringify({
+    goals: [],
+    decisions: [],
+    approvals: [],
+    executions: [],
+    lessons: [],
+    research: []
+  }, null, 2);
+  const emptyArrayBytes = '[]';
+
+  const run = runIsolatedJarvis(
+    business,
+    'capture discovery INJECTED_VALUE\n',
+    {},
+    {
+      seedProtectedFiles: {
+        'cofounder-settings.json': settingsBytes,
+        'cofounder-state.json': stateBytes,
+        'memory.json': emptyArrayBytes,
+        'tasks.json': emptyArrayBytes,
+        'reminders.json': emptyArrayBytes
+      }
+    }
+  );
+
+  const stdout = run.result.stdout ?? '';
+  assert.equal(run.result.status, 0);
+  assert.match(stdout, /The saved prospect selection does not match an open prospect, so none was selected\./);
+  assert.match(stdout, /Use: select prospect <exact name>/);
+  assert.doesNotMatch(stdout, /DISCOVERY CAPTURED/);
+  assert.doesNotMatch(stdout, /Impact: INJECTED_VALUE/);
+  assert.doesNotMatch(stdout, /Qualification invalidated because discovery changed/);
+
+  assert.equal(run.protectedFiles['business.json'], businessBytes);
+  assert.deepEqual(run.business, business);
+  const remaining = run.business.prospects.find(item => item.name === 'Remaining Open');
+  assert.deepEqual(remaining.discovery, { problem: 'ORIGINAL_PROBLEM' });
+  assert.deepEqual(remaining.qualification, qualification);
+  assert.equal(remaining.currentDiscoveryField, 'impact');
+  assert.equal(run.business.selectedProspectName, 'Closed Prospect');
+  assert.deepEqual(
+    run.business.prospects.find(item => item.name === 'Closed Prospect'),
+    closedProspect
+  );
+
+  const protectedExpectations = {
+    'cofounder-state.json': stateBytes,
+    'memory.json': emptyArrayBytes,
+    'tasks.json': emptyArrayBytes,
+    'reminders.json': emptyArrayBytes,
+    'cofounder-settings.json': settingsBytes
+  };
+  for (const [name, expected] of Object.entries(protectedExpectations)) {
+    assert.equal(run.protectedFiles[name], expected, name + ' must remain byte-identical');
+  }
+
+  const businessBackups = run.directoryListing.filter(name => /^business\.json\..*\.bak$/.test(name));
+  assert.deepEqual(businessBackups, [], 'the refused command must not create a business backup');
+  assert.equal(run.directoryListing.includes('.cofounder-state.lock'), false, 'the writer lock must be released');
+
+  const settingsBackups = run.directoryListing.filter(name => /^cofounder-settings\.json\..*\.bak$/.test(name));
+  assert.equal(settingsBackups.length, 1, 'the only permitted backup is the known startup settings backup');
+  assert.equal(run.backupFiles[settingsBackups[0]], settingsBytes);
+});
+
+test('RC-04 capture discovery preserves single-open auto-selection', () => {
+  const qualification = {
+    status: 'READY FOR CONFIRMATION',
+    checkedAt: '2026-01-01T00:00:00.000Z',
+    missing: [],
+    marker: 'CAPTURE_MARKER',
+    note: 'EXISTING_CAPTURE_NOTE'
+  };
+  const business = {
+    prospects: [
+      {
+        name: 'Remaining Open',
+        details: 'Synthetic open record',
+        status: 'NEW',
+        discovery: { problem: 'ORIGINAL_PROBLEM' },
+        currentDiscoveryField: 'impact',
+        qualification
+      }
+    ],
+    opportunities: [],
+    offers: [],
+    followUps: [],
+    revenue: []
+  };
+
+  const run = runIsolatedJarvis(business, 'capture discovery CONTROL_VALUE\n');
+  const stdout = run.result.stdout ?? '';
+  assert.equal(run.result.status, 0);
+  assert.match(stdout, /DISCOVERY CAPTURED/);
+  assert.match(stdout, /Impact: CONTROL_VALUE/);
+  assert.match(stdout, /Qualification invalidated because discovery changed/);
+  assert.doesNotMatch(stdout, /The saved prospect selection does not match an open prospect/);
+  assert.doesNotMatch(stdout, /Use: select prospect <exact name>/);
+
+  const remaining = run.business.prospects[0];
+  assert.equal(remaining.discovery.problem, 'ORIGINAL_PROBLEM');
+  assert.equal(remaining.discovery.impact, 'CONTROL_VALUE');
+  assert.equal(remaining.currentDiscoveryField, '');
+  assert.equal(remaining.qualification.status, 'NEEDS RECONFIRMATION');
+  assert.deepEqual(remaining.qualification.missing, []);
+  assert.equal(
+    remaining.qualification.note,
+    'Discovery changed after qualification review; rerun qualification and reconfirm buyer evidence.'
+  );
+  assert.equal(remaining.qualification.confirmationSource, undefined);
+  assert.equal(typeof remaining.qualification.checkedAt, 'string');
+  assert.ok(remaining.qualification.checkedAt);
+  assert.equal(remaining.name, 'Remaining Open');
+  assert.equal(remaining.details, 'Synthetic open record');
+  assert.equal(remaining.status, 'NEW');
+  assert.equal(run.business.prospects.length, 1);
+  for (const key of ['opportunities', 'offers', 'followUps', 'revenue']) {
+    assert.deepEqual(run.business[key], business[key], key + ' must remain unchanged');
+  }
+  assert.equal(Object.prototype.hasOwnProperty.call(run.business, 'selectedProspectName'), false);
+});
+
+test('RC-04 discovery refuses stale saved prospect selection without mutating Remaining Open', () => {
+  const qualification = {
+    status: 'READY FOR CONFIRMATION',
+    checkedAt: '2026-01-01T00:00:00.000Z',
+    missing: [],
+    marker: 'QUALIFICATION_MARKER',
+    confirmationSource: 'MARKER_SOURCE'
+  };
+  const business = {
+    prospects: [
+      {
+        name: 'Closed Prospect',
+        details: 'Synthetic closed record',
+        status: 'CLOSED',
+        discovery: { problem: 'CLOSED_ORIGINAL' }
+      },
+      {
+        name: 'Remaining Open',
+        details: 'Synthetic open record',
+        status: 'NEW',
+        discovery: { problem: 'ORIGINAL' },
+        qualification
+      }
+    ],
+    opportunities: [],
+    offers: [],
+    followUps: [],
+    revenue: [],
+    selectedProspectName: 'Closed Prospect'
+  };
+  const businessBytes = JSON.stringify(business, null, 2);
+  const settingsBytes = JSON.stringify({ speechEnabled: false }, null, 2);
+  const stateBytes = JSON.stringify({
+    goals: [],
+    decisions: [],
+    approvals: [],
+    executions: [],
+    lessons: [],
+    research: []
+  }, null, 2);
+  const emptyArrayBytes = '[]';
+
+  const run = runIsolatedJarvis(
+    business,
+    'discovery problem INJECTED_VALUE\n',
+    {},
+    {
+      seedProtectedFiles: {
+        'cofounder-settings.json': settingsBytes,
+        'cofounder-state.json': stateBytes,
+        'memory.json': emptyArrayBytes,
+        'tasks.json': emptyArrayBytes,
+        'reminders.json': emptyArrayBytes
+      }
+    }
+  );
+
+  const stdout = run.result.stdout ?? '';
+  assert.equal(run.result.status, 0);
+  assert.match(stdout, /The saved prospect selection does not match an open prospect, so none was selected\./);
+  assert.match(stdout, /Use: select prospect <exact name>/);
+  assert.doesNotMatch(stdout, /Discovery saved: problem/);
+  assert.doesNotMatch(stdout, /Qualification invalidated because discovery changed/);
+
+  assert.equal(run.protectedFiles['business.json'], businessBytes);
+  assert.deepEqual(run.business, business);
+  const remaining = run.business.prospects.find(item => item.name === 'Remaining Open');
+  assert.equal(remaining.discovery.problem, 'ORIGINAL');
+  assert.deepEqual(remaining.qualification, qualification);
+  assert.equal(run.business.selectedProspectName, 'Closed Prospect');
+  assert.deepEqual(
+    run.business.prospects.find(item => item.name === 'Closed Prospect'),
+    business.prospects[0]
+  );
+
+  const protectedExpectations = {
+    'cofounder-state.json': stateBytes,
+    'memory.json': emptyArrayBytes,
+    'tasks.json': emptyArrayBytes,
+    'reminders.json': emptyArrayBytes,
+    'cofounder-settings.json': settingsBytes
+  };
+  for (const [name, expected] of Object.entries(protectedExpectations)) {
+    assert.equal(run.protectedFiles[name], expected, name + ' must remain byte-identical');
+  }
+
+  const businessBackups = run.directoryListing.filter(name => /^business\.json\..*\.bak$/.test(name));
+  assert.deepEqual(businessBackups, [], 'the refused mutation must not create a business backup');
+  assert.equal(run.directoryListing.includes('.cofounder-state.lock'), false, 'the writer lock must be released');
+
+  const settingsBackups = run.directoryListing.filter(name => /^cofounder-settings\.json\..*\.bak$/.test(name));
+  assert.equal(settingsBackups.length, 1, 'the only permitted backup is the known startup settings backup');
+  assert.equal(run.backupFiles[settingsBackups[0]], settingsBytes);
+});
+
+test('RC-04 discovery preserves single-open auto-selection when no prospect is saved', () => {
+  const business = {
+    prospects: [
+      {
+        name: 'Remaining Open',
+        details: 'Synthetic open record',
+        status: 'NEW',
+        discovery: { problem: 'ORIGINAL' },
+        qualification: {
+          status: 'READY FOR CONFIRMATION',
+          checkedAt: '2026-01-01T00:00:00.000Z',
+          missing: [],
+          marker: 'QUALIFICATION_MARKER'
+        }
+      }
+    ],
+    opportunities: [],
+    offers: [],
+    followUps: [],
+    revenue: []
+  };
+
+  const run = runIsolatedJarvis(business, 'discovery problem CONTROL_VALUE\n');
+  const stdout = run.result.stdout ?? '';
+  assert.equal(run.result.status, 0);
+  assert.match(stdout, /Discovery saved: problem/);
+  assert.doesNotMatch(stdout, /The saved prospect selection does not match an open prospect/);
+
+  const remaining = run.business.prospects[0];
+  assert.equal(remaining.discovery.problem, 'CONTROL_VALUE');
+  assert.equal(remaining.qualification.status, 'NEEDS RECONFIRMATION');
+  assert.equal(Object.prototype.hasOwnProperty.call(run.business, 'selectedProspectName'), false);
+});
+
+test('RC-04 prospect discovery refuses stale saved prospect selection', () => {
+  const business = {
+    prospects: [
+      {
+        name: 'Closed Prospect',
+        details: 'Synthetic closed record',
+        status: 'CLOSED',
+        discovery: { problem: 'CLOSED_PROBLEM' }
+      },
+      {
+        name: 'Remaining Open',
+        details: 'Synthetic open record',
+        status: 'NEW'
+      }
+    ],
+    opportunities: [],
+    offers: [],
+    followUps: [],
+    revenue: [],
+    selectedProspectName: 'Closed Prospect'
+  };
+  const businessBytes = JSON.stringify(business, null, 2);
+  const settingsBytes = JSON.stringify({ speechEnabled: false }, null, 2);
+  const stateBytes = JSON.stringify({
+    goals: [],
+    decisions: [],
+    approvals: [],
+    executions: [],
+    lessons: [],
+    research: []
+  }, null, 2);
+  const emptyArrayBytes = '[]';
+
+  const run = runIsolatedJarvis(
+    business,
+    'prospect discovery\n',
+    {},
+    {
+      seedProtectedFiles: {
+        'cofounder-settings.json': settingsBytes,
+        'cofounder-state.json': stateBytes,
+        'memory.json': emptyArrayBytes,
+        'tasks.json': emptyArrayBytes,
+        'reminders.json': emptyArrayBytes
+      }
+    }
+  );
+
+  const stdout = run.result.stdout ?? '';
+  assert.equal(run.result.status, 0);
+  assert.match(stdout, /JARVIS PROSPECT DISCOVERY/);
+  assert.match(stdout, /The saved prospect selection does not match an open prospect, so none was selected\./);
+  assert.match(stdout, /Use: select prospect <exact name>/);
+  assert.doesNotMatch(stdout, /CURRENT PROSPECT/);
+  assert.doesNotMatch(stdout, /DISCOVERY STATUS/);
+  assert.doesNotMatch(stdout, /Problem: NOT DISCOVERED/);
+
+  assert.equal(run.protectedFiles['business.json'], businessBytes);
+  assert.deepEqual(run.business, business);
+  const remaining = run.business.prospects.find(item => item.name === 'Remaining Open');
+  assert.equal(Object.prototype.hasOwnProperty.call(remaining, 'discovery'), false);
+  assert.equal(remaining.name, 'Remaining Open');
+  assert.equal(remaining.details, 'Synthetic open record');
+  assert.equal(remaining.status, 'NEW');
+  assert.equal(run.business.selectedProspectName, 'Closed Prospect');
+  assert.deepEqual(
+    run.business.prospects.find(item => item.name === 'Closed Prospect'),
+    business.prospects[0]
+  );
+
+  const protectedExpectations = {
+    'cofounder-state.json': stateBytes,
+    'memory.json': emptyArrayBytes,
+    'tasks.json': emptyArrayBytes,
+    'reminders.json': emptyArrayBytes,
+    'cofounder-settings.json': settingsBytes
+  };
+  for (const [name, expected] of Object.entries(protectedExpectations)) {
+    assert.equal(run.protectedFiles[name], expected, name + ' must remain byte-identical');
+  }
+
+  const businessBackups = run.directoryListing.filter(name => /^business\.json\..*\.bak$/.test(name));
+  assert.deepEqual(businessBackups, [], 'the refused command must not create a business backup');
+  assert.equal(run.directoryListing.includes('.cofounder-state.lock'), false, 'the writer lock must be released');
+
+  const settingsBackups = run.directoryListing.filter(name => /^cofounder-settings\.json\..*\.bak$/.test(name));
+  assert.equal(settingsBackups.length, 1, 'the only permitted backup is the known startup settings backup');
+  assert.equal(run.backupFiles[settingsBackups[0]], settingsBytes);
+});
+
+test('RC-04 prospect discovery preserves single-open auto-selection', () => {
+  const business = {
+    prospects: [
+      {
+        name: 'Remaining Open',
+        details: 'Synthetic open record',
+        status: 'NEW'
+      }
+    ],
+    opportunities: [],
+    offers: [],
+    followUps: [],
+    revenue: []
+  };
+
+  const run = runIsolatedJarvis(business, 'prospect discovery\n');
+  const stdout = run.result.stdout ?? '';
+  assert.equal(run.result.status, 0);
+  assert.match(stdout, /JARVIS PROSPECT DISCOVERY/);
+  assert.match(stdout, /CURRENT PROSPECT/);
+  assert.match(stdout, /Name: Remaining Open/);
+  assert.match(stdout, /Problem: NOT DISCOVERED/);
+  assert.doesNotMatch(stdout, /The saved prospect selection does not match an open prospect/);
+  assert.doesNotMatch(stdout, /Use: select prospect <exact name>/);
+
+  const remaining = run.business.prospects[0];
+  assert.deepEqual(remaining.discovery, {
+    problem: "",
+    impact: "",
+    currentSolution: "",
+    desiredOutcome: "",
+    decisionMaker: "",
+    budget: "",
+    timeline: "",
+    notes: ""
+  });
+  assert.equal(remaining.name, 'Remaining Open');
+  assert.equal(remaining.details, 'Synthetic open record');
+  assert.equal(remaining.status, 'NEW');
+  assert.equal(run.business.prospects.length, 1);
+  for (const key of ['opportunities', 'offers', 'followUps', 'revenue']) {
+    assert.deepEqual(run.business[key], business[key], key + ' must remain unchanged');
+  }
+  assert.equal(Object.prototype.hasOwnProperty.call(run.business, 'selectedProspectName'), false);
+});
+
+test('RC-04 confirm prospect qualification refuses stale saved prospect selection', () => {
+  const qualification = {
+    status: 'READY FOR CONFIRMATION',
+    checkedAt: '2026-01-01T00:00:00.000Z',
+    missing: [],
+    marker: 'CONFIRMATION_MARKER',
+    note: 'EXISTING_CONFIRMATION_NOTE',
+    confirmationSource: 'PREEXISTING_SOURCE'
+  };
+  const closedProspect = {
+    name: 'Closed Prospect',
+    details: 'Synthetic closed record',
+    status: 'CLOSED',
+    discovery: { problem: 'CLOSED_PROBLEM' }
+  };
+  const openProspect = {
+    name: 'Remaining Open',
+    details: 'Synthetic open record',
+    status: 'NEW',
+    discovery: {
+      problem: 'Confirmed problem',
+      impact: 'Confirmed impact',
+      currentSolution: 'Current solution',
+      desiredOutcome: 'Desired outcome',
+      decisionMaker: 'Decision maker'
+    },
+    qualification
+  };
+  const business = {
+    prospects: [closedProspect, openProspect],
+    opportunities: [],
+    offers: [],
+    followUps: [],
+    revenue: [],
+    selectedProspectName: 'Closed Prospect'
+  };
+  const businessBytes = JSON.stringify(business, null, 2);
+  const settingsBytes = JSON.stringify({ speechEnabled: false }, null, 2);
+  const stateBytes = JSON.stringify({
+    goals: [],
+    decisions: [],
+    approvals: [],
+    executions: [],
+    lessons: [],
+    research: []
+  }, null, 2);
+  const emptyArrayBytes = '[]';
+
+  const run = runIsolatedJarvis(
+    business,
+    'confirm prospect qualification\n',
+    {},
+    {
+      seedProtectedFiles: {
+        'cofounder-settings.json': settingsBytes,
+        'cofounder-state.json': stateBytes,
+        'memory.json': emptyArrayBytes,
+        'tasks.json': emptyArrayBytes,
+        'reminders.json': emptyArrayBytes
+      }
+    }
+  );
+
+  const stdout = run.result.stdout ?? '';
+  assert.equal(run.result.status, 0);
+  assert.match(stdout, /The saved prospect selection does not match an open prospect, so none was selected\./);
+  assert.match(stdout, /Use: select prospect <exact name>/);
+  assert.doesNotMatch(stdout, /JARVIS BUYER CONFIRMATION/);
+  assert.doesNotMatch(stdout, /QUALIFICATION: QUALIFIED/);
+  assert.doesNotMatch(stdout, /Buyer confirmation recorded by Zayn/);
+
+  assert.equal(run.protectedFiles['business.json'], businessBytes);
+  assert.deepEqual(run.business, business);
+  const remaining = run.business.prospects.find(item => item.name === 'Remaining Open');
+  assert.deepEqual(remaining.qualification, qualification);
+  assert.equal(run.business.selectedProspectName, 'Closed Prospect');
+  assert.deepEqual(
+    run.business.prospects.find(item => item.name === 'Closed Prospect'),
+    closedProspect
+  );
+
+  const protectedExpectations = {
+    'cofounder-state.json': stateBytes,
+    'memory.json': emptyArrayBytes,
+    'tasks.json': emptyArrayBytes,
+    'reminders.json': emptyArrayBytes,
+    'cofounder-settings.json': settingsBytes
+  };
+  for (const [name, expected] of Object.entries(protectedExpectations)) {
+    assert.equal(run.protectedFiles[name], expected, name + ' must remain byte-identical');
+  }
+
+  const businessBackups = run.directoryListing.filter(name => /^business\.json\..*\.bak$/.test(name));
+  assert.deepEqual(businessBackups, [], 'the refused command must not create a business backup');
+  assert.equal(run.directoryListing.includes('.cofounder-state.lock'), false, 'the writer lock must be released');
+
+  const settingsBackups = run.directoryListing.filter(name => /^cofounder-settings\.json\..*\.bak$/.test(name));
+  assert.equal(settingsBackups.length, 1, 'the only permitted backup is the known startup settings backup');
+  assert.equal(run.backupFiles[settingsBackups[0]], settingsBytes);
+});
+
+test('RC-04 confirm prospect qualification preserves single-open auto-selection', () => {
+  const qualification = {
+    status: 'READY FOR CONFIRMATION',
+    checkedAt: '2026-01-01T00:00:00.000Z',
+    missing: [],
+    marker: 'CONFIRMATION_MARKER'
+  };
+  const business = {
+    prospects: [
+      {
+        name: 'Remaining Open',
+        details: 'Synthetic open record',
+        status: 'NEW',
+        discovery: {
+          problem: 'Confirmed problem',
+          impact: 'Confirmed impact',
+          currentSolution: 'Current solution',
+          desiredOutcome: 'Desired outcome',
+          decisionMaker: 'Decision maker'
+        },
+        qualification
+      }
+    ],
+    opportunities: [],
+    offers: [],
+    followUps: [],
+    revenue: []
+  };
+
+  const run = runIsolatedJarvis(business, 'confirm prospect qualification\n');
+  const stdout = run.result.stdout ?? '';
+  assert.equal(run.result.status, 0);
+  assert.match(stdout, /QUALIFICATION: QUALIFIED/);
+  assert.match(stdout, /Buyer confirmation recorded by Zayn/);
+  assert.doesNotMatch(stdout, /The saved prospect selection does not match an open prospect/);
+  assert.doesNotMatch(stdout, /Use: select prospect <exact name>/);
+  assert.doesNotMatch(stdout, /Confirmation blocked/);
+
+  const remaining = run.business.prospects[0];
+  assert.equal(remaining.qualification.status, 'QUALIFIED');
+  assert.equal(remaining.qualification.confirmationSource, 'ZAYN_CONFIRMED_BUYER_EVIDENCE');
+  assert.equal(remaining.qualification.confirmedBy, 'Zayn');
+  assert.equal(remaining.qualification.checkedAt, qualification.checkedAt);
+  assert.ok(remaining.qualification.confirmedAt);
+  assert.deepEqual(remaining.qualification.missing, []);
+  assert.deepEqual(remaining.discovery, business.prospects[0].discovery);
+  assert.equal(remaining.name, 'Remaining Open');
+  assert.equal(remaining.details, 'Synthetic open record');
+  assert.equal(remaining.status, 'NEW');
+  assert.equal(run.business.prospects.length, 1);
+  for (const key of ['opportunities', 'offers', 'followUps', 'revenue']) {
+    assert.deepEqual(run.business[key], business[key], key + ' must remain unchanged');
+  }
+  assert.equal(Object.prototype.hasOwnProperty.call(run.business, 'selectedProspectName'), false);
+});
+
+test('RC-04 prospect qualification refuses stale saved prospect selection', () => {
+  const qualification = {
+    status: 'READY FOR CONFIRMATION',
+    checkedAt: '2026-01-01T00:00:00.000Z',
+    missing: [],
+    marker: 'QUALIFICATION_MARKER',
+    note: 'EXISTING_QUALIFICATION_NOTE',
+    confirmationSource: 'PREEXISTING_SOURCE'
+  };
+  const closedProspect = {
+    name: 'Closed Prospect',
+    details: 'Synthetic closed record',
+    status: 'CLOSED',
+    discovery: { problem: 'CLOSED_PROBLEM' }
+  };
+  const openProspect = {
+    name: 'Remaining Open',
+    details: 'Synthetic open record',
+    status: 'NEW',
+    discovery: {
+      problem: 'Confirmed problem',
+      impact: 'Confirmed impact',
+      currentSolution: 'Current solution',
+      desiredOutcome: 'Desired outcome',
+      decisionMaker: 'Decision maker'
+    },
+    qualification
+  };
+  const business = {
+    prospects: [closedProspect, openProspect],
+    opportunities: [],
+    offers: [],
+    followUps: [],
+    revenue: [],
+    selectedProspectName: 'Closed Prospect'
+  };
+  const businessBytes = JSON.stringify(business, null, 2);
+  const settingsBytes = JSON.stringify({ speechEnabled: false }, null, 2);
+  const stateBytes = JSON.stringify({
+    goals: [],
+    decisions: [],
+    approvals: [],
+    executions: [],
+    lessons: [],
+    research: []
+  }, null, 2);
+  const emptyArrayBytes = '[]';
+
+  const run = runIsolatedJarvis(
+    business,
+    'prospect qualification\n',
+    {},
+    {
+      seedProtectedFiles: {
+        'cofounder-settings.json': settingsBytes,
+        'cofounder-state.json': stateBytes,
+        'memory.json': emptyArrayBytes,
+        'tasks.json': emptyArrayBytes,
+        'reminders.json': emptyArrayBytes
+      }
+    }
+  );
+
+  const stdout = run.result.stdout ?? '';
+  assert.equal(run.result.status, 0);
+  assert.match(stdout, /The saved prospect selection does not match an open prospect, so none was selected\./);
+  assert.match(stdout, /Use: select prospect <exact name>/);
+  assert.doesNotMatch(stdout, /JARVIS PROSPECT QUALIFICATION/);
+  assert.doesNotMatch(stdout, /QUALIFICATION: READY FOR CONFIRMATION/);
+  assert.doesNotMatch(stdout, /QUALIFICATION: NEEDS MORE DISCOVERY/);
+  assert.doesNotMatch(stdout, /QUALIFICATION: QUALIFIED/);
+
+  assert.equal(run.protectedFiles['business.json'], businessBytes);
+  assert.deepEqual(run.business, business);
+  const remaining = run.business.prospects.find(item => item.name === 'Remaining Open');
+  assert.deepEqual(remaining.qualification, qualification);
+  assert.equal(run.business.selectedProspectName, 'Closed Prospect');
+  assert.deepEqual(
+    run.business.prospects.find(item => item.name === 'Closed Prospect'),
+    closedProspect
+  );
+
+  const protectedExpectations = {
+    'cofounder-state.json': stateBytes,
+    'memory.json': emptyArrayBytes,
+    'tasks.json': emptyArrayBytes,
+    'reminders.json': emptyArrayBytes,
+    'cofounder-settings.json': settingsBytes
+  };
+  for (const [name, expected] of Object.entries(protectedExpectations)) {
+    assert.equal(run.protectedFiles[name], expected, name + ' must remain byte-identical');
+  }
+
+  const businessBackups = run.directoryListing.filter(name => /^business\.json\..*\.bak$/.test(name));
+  assert.deepEqual(businessBackups, [], 'the refused command must not create a business backup');
+  assert.equal(run.directoryListing.includes('.cofounder-state.lock'), false, 'the writer lock must be released');
+
+  const settingsBackups = run.directoryListing.filter(name => /^cofounder-settings\.json\..*\.bak$/.test(name));
+  assert.equal(settingsBackups.length, 1, 'the only permitted backup is the known startup settings backup');
+  assert.equal(run.backupFiles[settingsBackups[0]], settingsBytes);
+});
+
+test('RC-04 prospect qualification preserves single-open auto-selection', () => {
+  const business = {
+    prospects: [
+      {
+        name: 'Remaining Open',
+        details: 'Synthetic open record',
+        status: 'NEW',
+        discovery: {
+          problem: 'Confirmed problem',
+          impact: 'Confirmed impact',
+          currentSolution: 'Current solution',
+          desiredOutcome: 'Desired outcome',
+          decisionMaker: 'Decision maker'
+        }
+      }
+    ],
+    opportunities: [],
+    offers: [],
+    followUps: [],
+    revenue: []
+  };
+
+  const run = runIsolatedJarvis(business, 'prospect qualification\n');
+  const stdout = run.result.stdout ?? '';
+  assert.equal(run.result.status, 0);
+  assert.match(stdout, /QUALIFICATION: READY FOR CONFIRMATION/);
+  assert.doesNotMatch(stdout, /The saved prospect selection does not match an open prospect/);
+  assert.doesNotMatch(stdout, /Use: select prospect <exact name>/);
+
+  const remaining = run.business.prospects[0];
+  assert.equal(remaining.qualification.status, 'READY FOR CONFIRMATION');
+  assert.deepEqual(remaining.qualification.missing, []);
+  assert.equal(
+    remaining.qualification.note,
+    'Core discovery fields are present; buyer confirmation is still required.'
+  );
+  assert.equal(typeof remaining.qualification.checkedAt, 'string');
+  assert.ok(remaining.qualification.checkedAt);
+  assert.deepEqual(remaining.discovery, business.prospects[0].discovery);
+  assert.equal(remaining.name, 'Remaining Open');
+  assert.equal(remaining.details, 'Synthetic open record');
+  assert.equal(remaining.status, 'NEW');
+  assert.equal(run.business.prospects.length, 1);
+  for (const key of ['opportunities', 'offers', 'followUps', 'revenue']) {
+    assert.deepEqual(run.business[key], business[key], key + ' must remain unchanged');
+  }
+  assert.equal(Object.prototype.hasOwnProperty.call(run.business, 'selectedProspectName'), false);
+});
+
 test('commercial assessment rejects a QUALIFIED status without buyer-confirmation provenance', () => {
   const fixture = prospectFixture({
     problem: 'Manual customer follow-up is consuming staff time',
@@ -835,6 +1881,179 @@ test('run cycle does not auto-qualify complete but unconfirmed discovery', () =>
   assert.equal(business.prospects[0].qualification.status, 'READY FOR CONFIRMATION');
 });
 
+test('RC-04 run cycle refuses stale saved prospect selection', () => {
+  const qualification = {
+    status: 'NEEDS RECONFIRMATION',
+    checkedAt: '2026-01-01T00:00:00.000Z',
+    missing: ['budget'],
+    marker: 'RUN_CYCLE_MARKER',
+    note: 'EXISTING_RUN_CYCLE_NOTE',
+    confirmationSource: 'PREEXISTING_SOURCE'
+  };
+  const discovery = {
+    problem: 'ORIGINAL_PROBLEM',
+    impact: 'ORIGINAL_IMPACT',
+    currentSolution: 'ORIGINAL_CURRENT_SOLUTION',
+    desiredOutcome: 'ORIGINAL_DESIRED_OUTCOME',
+    decisionMaker: 'ORIGINAL_DECISION_MAKER'
+  };
+  const closedProspect = {
+    name: 'Closed Prospect',
+    details: 'Synthetic closed record',
+    status: 'CLOSED',
+    discovery: { problem: 'CLOSED_PROBLEM' }
+  };
+  const openProspect = {
+    name: 'Remaining Open',
+    details: 'Synthetic open record',
+    status: 'NEW',
+    discovery,
+    currentDiscoveryField: 'timeline',
+    qualification
+  };
+  const business = {
+    prospects: [closedProspect, openProspect],
+    opportunities: [],
+    offers: [],
+    followUps: [],
+    revenue: [],
+    selectedProspectName: 'Closed Prospect'
+  };
+  const businessBytes = JSON.stringify(business, null, 2);
+  const settingsBytes = JSON.stringify({ speechEnabled: false }, null, 2);
+  const stateBytes = JSON.stringify({
+    goals: [],
+    decisions: [],
+    approvals: [],
+    executions: [],
+    lessons: [],
+    research: []
+  }, null, 2);
+  const emptyArrayBytes = '[]';
+
+  const run = runIsolatedJarvis(
+    business,
+    'run cycle\n',
+    {},
+    {
+      seedProtectedFiles: {
+        'cofounder-settings.json': settingsBytes,
+        'cofounder-state.json': stateBytes,
+        'memory.json': emptyArrayBytes,
+        'tasks.json': emptyArrayBytes,
+        'reminders.json': emptyArrayBytes
+      }
+    }
+  );
+
+  const stdout = run.result.stdout ?? '';
+  assert.equal(run.result.status, 0);
+  assert.match(stdout, /The saved prospect selection does not match an open prospect, so none was selected\./);
+  assert.match(stdout, /Use: select prospect <exact name>/);
+  assert.doesNotMatch(stdout, /Active prospect: Remaining Open/);
+  assert.doesNotMatch(stdout, /STAGE: QUALIFICATION/);
+  assert.doesNotMatch(stdout, /Qualification: READY FOR CONFIRMATION/);
+  assert.doesNotMatch(stdout, /COMMERCIAL RECOMMENDATION/);
+
+  assert.equal(run.protectedFiles['business.json'], businessBytes);
+  assert.deepEqual(run.business, business);
+  const remaining = run.business.prospects.find(item => item.name === 'Remaining Open');
+  assert.deepEqual(remaining.discovery, discovery);
+  assert.deepEqual(remaining.qualification, qualification);
+  assert.equal(remaining.currentDiscoveryField, 'timeline');
+  assert.equal(remaining.status, 'NEW');
+  assert.equal(remaining.name, 'Remaining Open');
+  assert.equal(remaining.details, 'Synthetic open record');
+  assert.equal(run.business.selectedProspectName, 'Closed Prospect');
+  assert.deepEqual(
+    run.business.prospects.find(item => item.name === 'Closed Prospect'),
+    closedProspect
+  );
+
+  const protectedExpectations = {
+    'cofounder-state.json': stateBytes,
+    'memory.json': emptyArrayBytes,
+    'tasks.json': emptyArrayBytes,
+    'reminders.json': emptyArrayBytes,
+    'cofounder-settings.json': settingsBytes
+  };
+  for (const [name, expected] of Object.entries(protectedExpectations)) {
+    assert.equal(run.protectedFiles[name], expected, name + ' must remain byte-identical');
+  }
+
+  const businessBackups = run.directoryListing.filter(name => /^business\.json\..*\.bak$/.test(name));
+  assert.deepEqual(businessBackups, [], 'the refused command must not create a business backup');
+  assert.equal(run.directoryListing.includes('.cofounder-state.lock'), false, 'the writer lock must be released');
+
+  const settingsBackups = run.directoryListing.filter(name => /^cofounder-settings\.json\..*\.bak$/.test(name));
+  assert.equal(settingsBackups.length, 1, 'the only permitted backup is the known startup settings backup');
+  assert.equal(run.backupFiles[settingsBackups[0]], settingsBytes);
+});
+
+test('RC-04 run cycle preserves single-open auto-selection', () => {
+  const qualification = {
+    status: 'NEEDS RECONFIRMATION',
+    checkedAt: '2026-01-01T00:00:00.000Z',
+    missing: ['budget'],
+    marker: 'RUN_CYCLE_MARKER',
+    note: 'EXISTING_RUN_CYCLE_NOTE'
+  };
+  const discovery = {
+    problem: 'ORIGINAL_PROBLEM',
+    impact: 'ORIGINAL_IMPACT',
+    currentSolution: 'ORIGINAL_CURRENT_SOLUTION',
+    desiredOutcome: 'ORIGINAL_DESIRED_OUTCOME',
+    decisionMaker: 'ORIGINAL_DECISION_MAKER'
+  };
+  const business = {
+    prospects: [
+      {
+        name: 'Remaining Open',
+        details: 'Synthetic open record',
+        status: 'NEW',
+        discovery,
+        qualification
+      }
+    ],
+    opportunities: [],
+    offers: [],
+    followUps: [],
+    revenue: []
+  };
+
+  const run = runIsolatedJarvis(business, 'cycle\n');
+  const stdout = run.result.stdout ?? '';
+  assert.equal(run.result.status, 0);
+  assert.match(stdout, /COFOUNDER BUSINESS CYCLE/);
+  assert.match(stdout, /Active prospect: Remaining Open/);
+  assert.match(stdout, /STAGE: QUALIFICATION/);
+  assert.match(stdout, /Qualification: READY FOR CONFIRMATION/);
+  assert.doesNotMatch(stdout, /The saved prospect selection does not match an open prospect/);
+  assert.doesNotMatch(stdout, /Use: select prospect <exact name>/);
+  assert.doesNotMatch(stdout, /COMMERCIAL RECOMMENDATION/);
+
+  const remaining = run.business.prospects[0];
+  assert.deepEqual(remaining.discovery, discovery);
+  assert.equal(remaining.qualification.status, 'READY FOR CONFIRMATION');
+  assert.deepEqual(remaining.qualification.missing, []);
+  assert.equal(
+    remaining.qualification.note,
+    'Core discovery fields are present; buyer confirmation is still required.'
+  );
+  assert.equal(typeof remaining.qualification.checkedAt, 'string');
+  assert.ok(remaining.qualification.checkedAt);
+  assert.equal(remaining.qualification.marker, undefined);
+  assert.equal(remaining.qualification.confirmationSource, undefined);
+  assert.equal(remaining.name, 'Remaining Open');
+  assert.equal(remaining.details, 'Synthetic open record');
+  assert.equal(remaining.status, 'NEW');
+  assert.equal(run.business.prospects.length, 1);
+  for (const key of ['opportunities', 'offers', 'followUps', 'revenue']) {
+    assert.deepEqual(run.business[key], business[key], key + ' must remain unchanged');
+  }
+  assert.equal(Object.prototype.hasOwnProperty.call(run.business, 'selectedProspectName'), false);
+});
+
 test('commercial assessment can pursue a qualified prospect when commercial requirements are met', () => {
   const fixture = prospectFixture({
     problem: 'Manual customer follow-up is consuming staff time',
@@ -862,6 +2081,105 @@ test('commercial assessment can pursue a qualified prospect when commercial requ
   assert.match(result.stdout ?? '', /STRATEGIC FIT:/);
   assert.match(result.stdout ?? '', /External action: BLOCKED/);
 });
+
+test('RC-04 commercial assessment refuses stale saved prospect selection', () => {
+  const business = {
+    prospects: [
+      {
+        name: 'Closed Prospect',
+        details: 'Synthetic closed record',
+        status: 'CLOSED',
+        discovery: {
+          problem: 'CLOSED_PROBLEM',
+          impact: 'CLOSED_IMPACT',
+          currentSolution: 'CLOSED_SOLUTION',
+          desiredOutcome: 'CLOSED_OUTCOME',
+          decisionMaker: 'CLOSED_DECISION_MAKER'
+        }
+      },
+      {
+        name: 'Remaining Open',
+        details: 'Synthetic open record',
+        status: 'NEW',
+        discovery: {
+          problem: 'OPEN_ONLY_PROBLEM',
+          impact: 'OPEN_ONLY_IMPACT',
+          currentSolution: 'OPEN_ONLY_SOLUTION',
+          desiredOutcome: 'OPEN_ONLY_OUTCOME',
+          decisionMaker: 'OPEN_ONLY_DECISION_MAKER',
+          budget: 'OPEN_ONLY_BUDGET',
+          timeline: 'OPEN_ONLY_TIMELINE',
+          strategicFit: 'OPEN_ONLY_STRATEGIC_FIT'
+        },
+        qualification: {
+          status: 'QUALIFIED',
+          confirmedAt: '2026-10-11T00:00:00.000Z',
+          confirmationSource: 'ZAYN_CONFIRMED_BUYER_EVIDENCE'
+        }
+      }
+    ],
+    opportunities: [],
+    offers: [],
+    followUps: [],
+    revenue: [],
+    selectedProspectName: 'Closed Prospect'
+  };
+  const businessBytes = JSON.stringify(business, null, 2);
+
+  const run = runIsolatedJarvis(business, 'commercial assessment\n');
+  const stdout = run.result.stdout ?? '';
+
+  assert.equal(run.result.status, 0);
+  assert.match(stdout, /PROSPECT SELECTION REQUIRED/);
+  assert.match(stdout, /The saved prospect selection does not match an open prospect, so none was selected\./);
+  assert.match(stdout, /Use: select prospect <exact name>/);
+  assert.match(stdout, /No prospect-dependent commercial assessment was produced\./);
+  assert.doesNotMatch(stdout, /JARVIS COMMERCIAL ASSESSMENT/);
+  assert.doesNotMatch(stdout, /CUSTOMER:/);
+  assert.doesNotMatch(stdout, /VALUE:/);
+  assert.doesNotMatch(stdout, /EVIDENCE:/);
+  assert.doesNotMatch(stdout, /JUDGEMENT:/);
+  assert.doesNotMatch(stdout, /NEXT ACTION:/);
+
+  assert.equal(run.protectedFiles['business.json'], businessBytes);
+  assert.deepEqual(run.business, business);
+  assert.equal(run.business.selectedProspectName, 'Closed Prospect');
+  assert.deepEqual(
+    run.business.prospects.find(item => item.name === 'Remaining Open'),
+    business.prospects[1]
+  );
+});
+
+test('RC-04 commercial assessment preserves single-open auto-selection', () => {
+  const business = prospectFixture({
+    problem: 'SOLE_OPEN_PROBLEM',
+    impact: 'SOLE_OPEN_IMPACT',
+    currentSolution: 'SOLE_OPEN_SOLUTION',
+    desiredOutcome: 'SOLE_OPEN_OUTCOME',
+    decisionMaker: 'SOLE_OPEN_DECISION_MAKER'
+  });
+  business.prospects[0].name = 'Sole Open Prospect';
+  business.prospects[0].details = 'Synthetic sole open record';
+  const businessBytes = JSON.stringify(business, null, 2);
+
+  const run = runIsolatedJarvis(business, 'commercial assessment\n');
+  const stdout = run.result.stdout ?? '';
+
+  assert.equal(run.result.status, 0);
+  assert.match(stdout, /JARVIS COMMERCIAL ASSESSMENT/);
+  assert.match(stdout, /CUSTOMER: Sole Open Prospect/);
+  assert.match(stdout, /VALUE: SOLE_OPEN_OUTCOME/);
+  assert.match(stdout, /EVIDENCE: STRONG/);
+  assert.match(stdout, /JUDGEMENT: INVESTIGATE/);
+  assert.match(stdout, /NEXT ACTION: Run prospect qualification using the recorded discovery evidence before recommending pursuit\./);
+  assert.match(stdout, /External action: BLOCKED/);
+  assert.doesNotMatch(stdout, /PROSPECT SELECTION REQUIRED/);
+  assert.doesNotMatch(stdout, /The saved prospect selection does not match an open prospect/);
+  assert.equal(run.protectedFiles['business.json'], businessBytes);
+  assert.deepEqual(run.business, business);
+  assert.equal(Object.prototype.hasOwnProperty.call(run.business, 'selectedProspectName'), false);
+});
+
 test('prospect intelligence rejects weak research as insufficient evidence', () => {
   const { result } = runIsolatedJarvis(
     prospectFixture(),
@@ -959,7 +2277,7 @@ test('research remains unassigned by default and only links to an explicitly nam
 test('research command stores unassigned research without borrowing the first open prospect', {
   skip: process.platform !== 'win32'
 }, () => {
-  const { result, state } = runIsolatedJarvis(
+  const { result, state, researchCalls } = runIsolatedJarvis(
     prospectFixture(),
     'research: find company website\n',
     {},
@@ -968,9 +2286,19 @@ test('research command stores unassigned research without borrowing the first op
 
   assert.equal(result.status, 0);
   assert.match(result.stdout ?? '', /Prospect: Unassigned/);
+  assert.equal(researchCalls, 1, 'the research tool must be invoked exactly once');
   assert.equal(state.research.length, 1);
   assert.equal(state.research[0].prospectName, null);
   assert.equal(state.research[0].query, 'find company website');
+  assert.equal(state.research[0].status, 'UNVERIFIED');
+  assert.deepEqual(state.research[0].sources, [{
+    url: 'https://example.com/test',
+    support: 'unresolved',
+    title: 'Example Result'
+  }]);
+  assert.ok(!('retrievedAt' in state.research[0].sources[0]), 'record creation must not be mislabelled as a retrieval timestamp');
+  assert.equal(typeof state.research[0].createdAt, 'string');
+  assert.ok(!Number.isNaN(Date.parse(state.research[0].createdAt)), 'record creation timestamp must be valid');
 });
 
 test('research command associates evidence only with the explicitly named open prospect', {
@@ -1174,6 +2502,103 @@ test('explicit prospect selection directs recommendation to the chosen prospect'
   assert.match(result.stdout ?? '', /Prospect: Second prospect/);
   assert.equal(savedBusiness.selectedProspectName, 'Second prospect');
 });
+
+test('RC-04 prospect recommendation refuses stale saved prospect selection', () => {
+  const business = {
+    prospects: [
+      {
+        name: 'Closed Prospect',
+        details: 'Synthetic closed record',
+        status: 'CLOSED',
+        discovery: {
+          problem: 'CLOSED_PROBLEM',
+          impact: 'CLOSED_IMPACT',
+          currentSolution: 'CLOSED_SOLUTION',
+          desiredOutcome: 'CLOSED_OUTCOME',
+          decisionMaker: 'CLOSED_DECISION_MAKER'
+        }
+      },
+      {
+        name: 'Remaining Open',
+        details: 'Synthetic open record',
+        status: 'NEW',
+        discovery: {
+          problem: 'OPEN_ONLY_PROBLEM',
+          impact: 'OPEN_ONLY_IMPACT',
+          currentSolution: 'OPEN_ONLY_SOLUTION',
+          desiredOutcome: 'OPEN_ONLY_OUTCOME',
+          decisionMaker: 'OPEN_ONLY_DECISION_MAKER'
+        }
+      }
+    ],
+    opportunities: [],
+    offers: [],
+    followUps: [],
+    revenue: [],
+    selectedProspectName: 'Closed Prospect'
+  };
+  const businessBytes = JSON.stringify(business, null, 2);
+
+  const run = runIsolatedJarvis(business, 'prospect recommendation\n');
+  const stdout = run.result.stdout ?? '';
+
+  assert.equal(run.result.status, 0);
+  assert.match(stdout, /PROSPECT SELECTION REQUIRED/);
+  assert.match(stdout, /The saved prospect selection does not match an open prospect, so none was selected\./);
+  assert.match(stdout, /Use: select prospect <exact name>/);
+  assert.match(stdout, /No prospect-dependent recommendation was produced\./);
+  assert.doesNotMatch(stdout, /JARVIS PROSPECT RECOMMENDATION/);
+  assert.doesNotMatch(stdout, /Prospect: Remaining Open/);
+  assert.doesNotMatch(stdout, /OPEN_ONLY_PROBLEM/);
+  assert.doesNotMatch(stdout, /STATUS: READY FOR REVIEW/);
+
+  assert.equal(run.protectedFiles['business.json'], businessBytes);
+  assert.deepEqual(run.business, business);
+  assert.equal(run.business.selectedProspectName, 'Closed Prospect');
+  assert.deepEqual(
+    run.business.prospects.find(item => item.name === 'Remaining Open'),
+    business.prospects[1]
+  );
+});
+
+test('RC-04 prospect recommendation preserves single-open auto-selection', () => {
+  const business = {
+    prospects: [
+      {
+        name: 'Sole Open Prospect',
+        details: 'Synthetic sole open record',
+        status: 'NEW',
+        discovery: {
+          problem: 'SOLE_OPEN_PROBLEM',
+          impact: 'SOLE_OPEN_IMPACT',
+          currentSolution: 'SOLE_OPEN_SOLUTION',
+          desiredOutcome: 'SOLE_OPEN_OUTCOME',
+          decisionMaker: 'SOLE_OPEN_DECISION_MAKER'
+        }
+      }
+    ],
+    opportunities: [],
+    offers: [],
+    followUps: [],
+    revenue: []
+  };
+  const businessBytes = JSON.stringify(business, null, 2);
+
+  const run = runIsolatedJarvis(business, 'prospect recommendation\n');
+  const stdout = run.result.stdout ?? '';
+
+  assert.equal(run.result.status, 0);
+  assert.match(stdout, /JARVIS PROSPECT RECOMMENDATION/);
+  assert.match(stdout, /Prospect: Sole Open Prospect/);
+  assert.match(stdout, /STATUS: READY FOR REVIEW/);
+  assert.match(stdout, /Core discovery information has been recorded\./);
+  assert.doesNotMatch(stdout, /PROSPECT SELECTION REQUIRED/);
+  assert.doesNotMatch(stdout, /The saved prospect selection does not match an open prospect/);
+  assert.equal(run.protectedFiles['business.json'], businessBytes);
+  assert.deepEqual(run.business, business);
+  assert.equal(Object.prototype.hasOwnProperty.call(run.business, 'selectedProspectName'), false);
+});
+
 test('commercial brain respects the explicitly selected prospect', () => {
   const business = prospectFixture({
     problem: 'First prospect problem',
@@ -1202,6 +2627,95 @@ test('commercial brain respects the explicitly selected prospect', () => {
   assert.match(result.stdout ?? '', /ACTIVE PROSPECT[\s\S]*Name: Second prospect/);
   assert.match(result.stdout ?? '', /Second prospect problem/);
   assert.doesNotMatch(result.stdout ?? '', /Name: Test prospect/);
+});
+
+test('RC-04 commercialBrain analysis refuses stale saved prospect selection', () => {
+  const business = prospectFixture({
+    problem: 'OPEN_PROBLEM',
+    impact: 'OPEN_IMPACT',
+    currentSolution: 'OPEN_CURRENT_SOLUTION',
+    desiredOutcome: 'OPEN_DESIRED_OUTCOME',
+    decisionMaker: 'OPEN_DECISION_MAKER',
+    budget: 'OPEN_BUDGET',
+    timeline: 'OPEN_TIMELINE'
+  });
+  business.prospects[0].name = 'Remaining Open Prospect';
+  business.prospects[0].qualification = { status: 'QUALIFIED' };
+  business.prospects.unshift({
+    name: 'Closed Prospect',
+    details: 'Closed business',
+    status: 'CLOSED',
+    discovery: {}
+  });
+  business.selectedProspectName = 'Closed Prospect';
+  business.opportunities = [{ text: 'GENERIC_OPEN_OPPORTUNITY', status: 'OPEN' }];
+
+  const run = runIsolatedJarvis(business, 'commercial brain\n');
+  const stdout = run.result.stdout ?? '';
+
+  assert.equal(run.result.status, 0);
+  assert.match(stdout, /JARVIS COMMERCIAL BRAIN/);
+  assert.match(stdout, /COMMERCIAL PIPELINE/);
+  assert.match(stdout, /Open prospects: 1/);
+  assert.match(stdout, /Open opportunities: 1/);
+  assert.match(stdout, /OPEN OPPORTUNITY/);
+  assert.match(stdout, /GENERIC_OPEN_OPPORTUNITY/);
+  assert.match(stdout, /PROSPECT SELECTION REQUIRED/);
+  assert.match(stdout, /The saved prospect selection does not match an open prospect, so none was selected\./);
+  assert.match(stdout, /Use: select prospect <exact name>/);
+
+  assert.doesNotMatch(stdout, /ACTIVE PROSPECT/);
+  assert.doesNotMatch(stdout, /Name: Remaining Open Prospect/);
+  assert.doesNotMatch(stdout, /OPEN_PROBLEM/);
+  assert.doesNotMatch(stdout, /OPEN_IMPACT/);
+  assert.doesNotMatch(stdout, /OPEN_CURRENT_SOLUTION/);
+  assert.doesNotMatch(stdout, /OPEN_DESIRED_OUTCOME/);
+  assert.doesNotMatch(stdout, /OPEN_DECISION_MAKER/);
+  assert.doesNotMatch(stdout, /OPEN_BUDGET/);
+  assert.doesNotMatch(stdout, /OPEN_TIMELINE/);
+  assert.doesNotMatch(stdout, /Qualification:/);
+  assert.doesNotMatch(stdout, /POTENTIAL ZAYZANA OFFER FIT/);
+  assert.doesNotMatch(stdout, /COMMERCIAL READ/);
+  assert.doesNotMatch(stdout, /COMMERCIAL NEXT ACTION/);
+  assert.doesNotMatch(stdout, /DISCOVERY QUESTION/);
+  assert.doesNotMatch(stdout, /Recorded evidence is sufficient for commercial review\./);
+  assert.doesNotMatch(stdout, /Review the matching Zayzana offer and prepare commercial terms for Zayn's approval\./);
+
+  assert.deepEqual(run.business, business);
+  assert.equal(run.business.selectedProspectName, 'Closed Prospect');
+  assert.equal(Object.prototype.hasOwnProperty.call(run.business.prospects[0], 'currentDiscoveryField'), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(run.business.prospects[1], 'currentDiscoveryField'), false);
+});
+
+test('RC-04 commercialBrain analysis preserves single-open auto-selection', () => {
+  const business = prospectFixture({
+    problem: 'SOLE_OPEN_PROBLEM',
+    impact: 'SOLE_OPEN_IMPACT',
+    currentSolution: 'SOLE_OPEN_CURRENT_SOLUTION',
+    desiredOutcome: 'SOLE_OPEN_DESIRED_OUTCOME',
+    decisionMaker: 'SOLE_OPEN_DECISION_MAKER'
+  });
+
+  const run = runIsolatedJarvis(business, 'commercial brain\n');
+  const stdout = run.result.stdout ?? '';
+
+  assert.equal(run.result.status, 0);
+  assert.match(stdout, /JARVIS COMMERCIAL BRAIN/);
+  assert.match(stdout, /ACTIVE PROSPECT[\s\S]*Name: Test prospect/);
+  assert.match(stdout, /Qualification: NOT CHECKED/);
+  assert.match(stdout, /Problem: SOLE_OPEN_PROBLEM/);
+  assert.match(stdout, /Current solution: SOLE_OPEN_CURRENT_SOLUTION/);
+  assert.match(stdout, /COMMERCIAL GAPS[\s\S]*1\. budget[\s\S]*2\. timeline/);
+  assert.match(stdout, /Do not treat this prospect as sales-ready yet\./);
+  assert.match(stdout, /COMMERCIAL NEXT ACTION[\s\S]*Confirm whether a budget or spending range exists for solving the problem\./);
+  assert.match(stdout, /DISCOVERY QUESTION[\s\S]*Has the business already set aside a budget or spending range for solving this problem\?/);
+
+  assert.doesNotMatch(stdout, /PROSPECT SELECTION REQUIRED/);
+  assert.doesNotMatch(stdout, /The saved prospect selection does not match an open prospect/);
+
+  assert.deepEqual(run.business, business);
+  assert.equal(Object.prototype.hasOwnProperty.call(run.business, 'selectedProspectName'), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(run.business.prospects[0], 'currentDiscoveryField'), false);
 });
 
 test('commercial view displays the recorded current solution as evidence', () => {
@@ -1309,6 +2823,88 @@ test('prospect workspace leaves business data unchanged', () => {
   assert.equal(result.status, 0);
   assert.match(result.stdout ?? '', /READY FOR REVIEW/);
   assert.equal(JSON.stringify(business), before);
+});
+
+test('RC-04 prospect workspace refuses stale saved prospect selection', () => {
+  const business = prospectFixture({
+    problem: 'WORKSPACE_OPEN_PROBLEM',
+    impact: 'WORKSPACE_OPEN_IMPACT',
+    currentSolution: 'Manual workspace process',
+    desiredOutcome: 'WORKSPACE_OPEN_OUTCOME',
+    decisionMaker: 'WORKSPACE_OPEN_DECISION_MAKER',
+    budget: 'R15000',
+    timeline: 'Within 30 days'
+  });
+  business.prospects[0].name = 'Remaining Open Prospect';
+  business.prospects[0].details = 'Synthetic open workspace record';
+  business.prospects.unshift({
+    name: 'Closed Prospect',
+    details: 'Synthetic closed workspace record',
+    status: 'CLOSED',
+    discovery: {}
+  });
+  business.selectedProspectName = 'Closed Prospect';
+  const businessBytes = JSON.stringify(business, null, 2);
+
+  const run = runIsolatedJarvis(business, 'prospect workspace\n');
+  const stdout = run.result.stdout ?? '';
+
+  assert.equal(run.result.status, 0);
+  assert.match(stdout, /PROSPECT SELECTION REQUIRED/);
+  assert.match(stdout, /The saved prospect selection does not match an open prospect, so none was selected\./);
+  assert.match(stdout, /Use: select prospect <exact name>/);
+
+  assert.doesNotMatch(stdout, /JARVIS PROSPECT WORKSPACE/);
+  assert.doesNotMatch(stdout, /IDENTITY/);
+  assert.doesNotMatch(stdout, /Name: Remaining Open Prospect/);
+  assert.doesNotMatch(stdout, /Synthetic open workspace record/);
+  assert.doesNotMatch(stdout, /WORKSPACE_OPEN_PROBLEM/);
+  assert.doesNotMatch(stdout, /WORKSPACE_OPEN_IMPACT/);
+  assert.doesNotMatch(stdout, /Manual workspace process/);
+  assert.doesNotMatch(stdout, /WORKSPACE_OPEN_OUTCOME/);
+  assert.doesNotMatch(stdout, /WORKSPACE_OPEN_DECISION_MAKER/);
+  assert.doesNotMatch(stdout, /COMMERCIAL FIGURES/);
+  assert.doesNotMatch(stdout, /RECOMMENDATION/);
+  assert.doesNotMatch(stdout, /QUALIFICATION/);
+  assert.doesNotMatch(stdout, /NEXT STAGE/);
+
+  assert.equal(run.protectedFiles['business.json'], businessBytes);
+  assert.deepEqual(run.business, business);
+  assert.equal(run.business.selectedProspectName, 'Closed Prospect');
+  assert.equal(Object.prototype.hasOwnProperty.call(run.business.prospects[0], 'currentDiscoveryField'), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(run.business.prospects[1], 'currentDiscoveryField'), false);
+});
+
+test('RC-04 prospect workspace preserves single-open auto-selection', () => {
+  const business = prospectFixture({
+    problem: 'Manual customer follow-up is consuming staff time',
+    impact: 'Staff lose 10 hours weekly',
+    currentSolution: 'Staff use spreadsheets and manual messages',
+    desiredOutcome: 'Automate routine follow-up and reduce manual admin',
+    decisionMaker: 'Operations manager'
+  });
+  business.prospects[0].name = 'Sole Workspace Prospect';
+  business.prospects[0].details = 'Synthetic sole workspace record';
+  const before = JSON.stringify(business);
+
+  const run = runIsolatedJarvis(business, 'prospect workspace\n');
+  const stdout = run.result.stdout ?? '';
+
+  assert.equal(run.result.status, 0);
+  assert.match(stdout, /JARVIS PROSPECT WORKSPACE/);
+  assert.match(stdout, /IDENTITY/);
+  assert.match(stdout, /Name: Sole Workspace Prospect/);
+  assert.match(stdout, /Details: Synthetic sole workspace record/);
+  assert.match(stdout, /DISCOVERY/);
+  assert.match(stdout, /READY FOR REVIEW/);
+  assert.match(stdout, /COMMERCIAL FIGURES/);
+  assert.match(stdout, /QUALIFICATION/);
+  assert.match(stdout, /NEXT STAGE/);
+  assert.doesNotMatch(stdout, /PROSPECT SELECTION REQUIRED/);
+  assert.doesNotMatch(stdout, /The saved prospect selection does not match an open prospect/);
+
+  assert.equal(JSON.stringify(run.business), before);
+  assert.equal(Object.prototype.hasOwnProperty.call(run.business, 'selectedProspectName'), false);
 });
 
 test('dashboard views respect the selected prospect instead of showing the first open prospect', () => {
@@ -1595,6 +3191,28 @@ test('read-only business audit reports local file health and missing memory with
   assert.match(result.stdout ?? '', /No files were modified by the audit/);
   assert.deepEqual(afterBusiness, business);
   assert.deepEqual(afterState, state);
+});
+
+test('read-only business audit detects malformed JSON without changing the file', () => {
+  const malformedBusiness = '{ invalid json';
+  const { result, protectedFiles } = runIsolatedJarvis(
+    {},
+    'audit\n',
+    {},
+    { invalidBusinessData: true }
+  );
+
+  assert.equal(result.status, 0, 'stdout: ' + result.stdout + '\nstderr: ' + result.stderr);
+  assert.match(result.stdout ?? '', /business\.json[\s\S]*Status: INVALID JSON/);
+  const problemCount = (result.stdout ?? '').match(/Items requiring review: (\d+)/);
+  assert.ok(problemCount, 'the audit must report a problem count');
+  assert.ok(Number(problemCount[1]) > 0, 'the audit must report a non-zero problem count');
+  assert.equal(
+    protectedFiles['business.json'],
+    malformedBusiness,
+    'the malformed business.json must remain byte-identical'
+  );
+  assert.match(result.stdout ?? '', /No files were modified by the audit/);
 });
 
 
@@ -2125,6 +3743,7 @@ test('stop during the grounded research stage cancels the answer and skips the a
   let killTimer;
   try {
     fs.copyFileSync(indexFile, path.join(tempDir, 'index.js'));
+    fs.copyFileSync(path.join(repoRoot, 'state-store.js'), path.join(tempDir, 'state-store.js'));
     fs.writeFileSync(
       path.join(tempDir, 'business.json'),
       JSON.stringify({ prospects: [], opportunities: [], offers: [], followUps: [], revenue: [] })
@@ -3040,6 +4659,7 @@ function runOpenWebsiteScenario(input, outcome, options = {}) {
         ? stripOpenWebsiteErrorCallback(productionSource)
         : productionSource
     );
+    fs.copyFileSync(path.join(repoRoot, 'state-store.js'), path.join(tempDir, 'state-store.js'));
     fs.writeFileSync(
       path.join(tempDir, 'cofounder-settings.json'),
       JSON.stringify({ speechEnabled: false }, null, 2)
@@ -3336,6 +4956,7 @@ function runStateHygieneScenario(input, options = {}) {
 
   try {
     fs.copyFileSync(indexFile, path.join(tempDir, 'index.js'));
+    fs.copyFileSync(path.join(repoRoot, 'state-store.js'), path.join(tempDir, 'state-store.js'));
     fs.writeFileSync(
       path.join(tempDir, 'cofounder-settings.json'),
       JSON.stringify({ speechEnabled: false }, null, 2)
@@ -3571,4 +5192,410 @@ test('state-file read hygiene: an intentional state write still records the deci
   assert.equal(written.decisions[0].decision, 'hygiene-check');
   assert.equal(written.decisions[0].status, 'ACTIVE');
   assert.equal(run.protectedFiles['business.json'], null, 'recording a decision must not create business.json');
+});
+
+// ---------------------------------------------------------------------------
+// PORTFOLIO JUDGEMENT REGRESSION DEFINITIONS
+// ---------------------------------------------------------------------------
+
+test('zayzana focus prints the exact fail-closed direction and separates it from immediate action', () => {
+  const business = prospectFixture();
+  business.followUps = [
+    { text: 'SIMULATED open follow-up', status: 'OPEN' }
+  ];
+  business.opportunities = [
+    { text: 'SIMULATED open opportunity', status: 'OPEN' }
+  ];
+
+  const { result } = runIsolatedJarvis(
+    business,
+    'zayzana focus\n',
+    {
+      goals: [{ title: 'SIMULATED active goal', status: 'ACTIVE' }],
+      decisions: [{ decision: 'SIMULATED active decision', status: 'ACTIVE' }]
+    }
+  );
+  const stdout = result.stdout ?? '';
+
+  assert.equal(result.status, 0);
+  assert.equal(
+    stdout.split(/\r?\n/).filter(line => line === 'COMMERCIAL DIRECTION: NOT ESTABLISHED').length,
+    1
+  );
+  assert.doesNotMatch(stdout, /SIMULATED active goal|SIMULATED active decision/);
+  assert.ok(
+    stdout.indexOf('COMMERCIAL DIRECTION: NOT ESTABLISHED') < stdout.indexOf('IMMEDIATE ACTION'),
+    'commercial direction must precede the separate immediate-action section'
+  );
+  assert.match(stdout, /IMMEDIATE ACTION: Follow-up \| SIMULATED open follow-up/);
+  assert.doesNotMatch(stdout, /SIMULATED open opportunity/);
+});
+
+test('zayzana focus preserves selected-prospect visibility and the exact selection instruction', () => {
+  const selected = prospectFixture();
+  selected.prospects.push({
+    name: 'Second prospect',
+    details: 'Another test business',
+    status: 'NEW',
+    discovery: {}
+  });
+  selected.selectedProspectName = 'Second prospect';
+
+  const selectedRun = runIsolatedJarvis(selected, 'zayzana focus\n');
+  assert.equal(selectedRun.result.status, 0);
+  assert.match(selectedRun.result.stdout ?? '', /IMMEDIATE ACTION: Selected prospect \| Second prospect/);
+  assert.doesNotMatch(selectedRun.result.stdout ?? '', /Test prospect/);
+
+  const unselected = prospectFixture();
+  unselected.prospects.push({
+    name: 'Second prospect',
+    details: 'Another test business',
+    status: 'NEW',
+    discovery: {}
+  });
+
+  const unselectedRun = runIsolatedJarvis(unselected, 'zayzana focus\n');
+  assert.equal(unselectedRun.result.status, 0);
+  assert.match(unselectedRun.result.stdout ?? '', /Command: select prospect <exact name>/);
+  assert.doesNotMatch(unselectedRun.result.stdout ?? '', /IMMEDIATE ACTION: Selected prospect/);
+});
+
+test('recommend fails closed on a stale saved prospect selection with one other prospect open', () => {
+  const business = prospectFixture();
+  business.prospects[0].status = 'CLOSED';
+  business.prospects.push({
+    name: 'Second prospect',
+    details: 'Another test business',
+    status: 'NEW',
+    discovery: {}
+  });
+  business.selectedProspectName = 'Test prospect';
+
+  const { result } = runIsolatedJarvis(business, 'recommend\n');
+  const stdout = result.stdout ?? '';
+
+  assert.equal(result.status, 0);
+  assert.match(stdout, /PROSPECT SELECTION REQUIRED/);
+  assert.match(stdout, /The saved prospect selection does not match an open prospect, so none was selected\./);
+  assert.match(stdout, /Use: select prospect <exact name>/);
+  assert.doesNotMatch(stdout, /Focus first on:/);
+  assert.doesNotMatch(stdout, /Prospect discovery is incomplete/);
+  assert.doesNotMatch(stdout, /Focus on converting the open opportunity/);
+});
+
+test('recommend refuses an identity collision between open and closed prospects', () => {
+  const business = prospectFixture();
+  business.prospects.push({
+    name: ' test PROSPECT ',
+    details: 'A closed synthetic record with the same normalized name',
+    status: 'CLOSED',
+    discovery: {}
+  });
+  business.selectedProspectName = ' TEST prospect ';
+  business.followUps = [
+    { text: 'SIMULATED follow-up', status: 'OPEN' }
+  ];
+
+  const { result } = runIsolatedJarvis(business, 'recommend\n');
+  const stdout = result.stdout ?? '';
+
+  assert.equal(result.status, 0);
+  assert.match(stdout, /PROSPECT SELECTION REQUIRED/);
+  assert.match(stdout, /identity-collision/);
+  assert.doesNotMatch(stdout, /Focus first on:/);
+  assert.doesNotMatch(stdout, /Prospect discovery is incomplete/);
+  assert.doesNotMatch(stdout, /SIMULATED follow-up/);
+  assert.doesNotMatch(stdout, /Test prospect/);
+});
+
+test('recommend refuses a nonblank unresolved selection when no prospects are open', () => {
+  const business = prospectFixture();
+  business.prospects[0].status = 'CLOSED';
+  business.selectedProspectName = 'Missing prospect';
+  business.followUps = [
+    { text: 'SIMULATED follow-up', status: 'OPEN' }
+  ];
+
+  const { result } = runIsolatedJarvis(business, 'recommend\n');
+  const stdout = result.stdout ?? '';
+
+  assert.equal(result.status, 0);
+  assert.match(stdout, /PROSPECT SELECTION REQUIRED/);
+  assert.match(stdout, /No open prospect is recorded\./);
+  assert.match(stdout, /Use: select prospect <exact name>/);
+  assert.doesNotMatch(stdout, /Focus first on:/);
+  assert.doesNotMatch(stdout, /SIMULATED follow-up/);
+});
+
+test('recommend fails closed on duplicate open prospect names matching the saved selection', () => {
+  const business = prospectFixture();
+  business.prospects.push({
+    name: 'Test prospect',
+    details: 'A different synthetic record with the same name',
+    status: 'NEW',
+    discovery: {}
+  });
+  business.selectedProspectName = 'Test prospect';
+
+  const { result } = runIsolatedJarvis(business, 'recommend\n');
+  const stdout = result.stdout ?? '';
+
+  assert.equal(result.status, 0);
+  assert.match(stdout, /PROSPECT SELECTION REQUIRED/);
+  assert.match(stdout, /More than one open prospect shares the saved name, so none was selected\./);
+  assert.match(stdout, /Use: select prospect <exact name>/);
+  assert.doesNotMatch(stdout, /Focus first on:/);
+  assert.doesNotMatch(stdout, /Focus on converting the open opportunity/);
+});
+
+test('recommend fails closed when multiple prospects are open and none is selected', () => {
+  const business = prospectFixture();
+  business.prospects.push({
+    name: 'Second prospect',
+    details: 'Another test business',
+    status: 'NEW',
+    discovery: {}
+  });
+
+  const { result } = runIsolatedJarvis(business, 'recommend\n');
+  const stdout = result.stdout ?? '';
+
+  assert.equal(result.status, 0);
+  assert.match(stdout, /PROSPECT SELECTION REQUIRED/);
+  assert.match(stdout, /More than one open prospect is recorded and none is selected\./);
+  assert.match(stdout, /Use: select prospect <exact name>/);
+  assert.doesNotMatch(stdout, /Focus first on:/);
+  assert.doesNotMatch(stdout, /Prospect discovery is incomplete/);
+});
+
+test('recommend auto-selects the only open prospect when no selection is saved', () => {
+  const { result } = runIsolatedJarvis(prospectFixture(), 'recommend\n');
+  const stdout = result.stdout ?? '';
+
+  assert.equal(result.status, 0);
+  assert.match(stdout, /Focus first on: complete discovery for Test prospect/);
+  assert.match(stdout, /Test prospect/);
+  assert.doesNotMatch(stdout, /PROSPECT SELECTION REQUIRED/);
+  assert.doesNotMatch(stdout, /Use: select prospect <exact name>/);
+});
+
+test('recommend preserves non-prospect guidance when no prospect is open', () => {
+  const business = prospectFixture();
+  business.prospects = [];
+  business.followUps = [
+    { text: 'SIMULATED follow-up', status: 'OPEN' }
+  ];
+  business.opportunities = [
+    { text: 'SIMULATED opportunity', status: 'OPEN' }
+  ];
+
+  const { result } = runIsolatedJarvis(business, 'recommend\n');
+  const stdout = result.stdout ?? '';
+
+  assert.equal(result.status, 0);
+  assert.match(stdout, /Focus first on: SIMULATED follow-up/);
+  assert.doesNotMatch(stdout, /PROSPECT SELECTION REQUIRED/);
+  assert.doesNotMatch(stdout, /Use: select prospect <exact name>/);
+  assert.match(stdout, /No external action taken\. Zayn approval is required before execution\./);
+});
+
+test('recommend blocks qualification and contract guidance when prospect resolution fails', () => {
+  const business = prospectFixture();
+  business.prospects.push({
+    name: 'Second prospect',
+    details: 'Another test business',
+    status: 'NEW',
+    discovery: {}
+  });
+  business.followUps = [
+    { text: 'Send contract to prospect', status: 'OPEN' }
+  ];
+  business.opportunities = [
+    { text: 'SIMULATED opportunity', status: 'OPEN' }
+  ];
+
+  const { result } = runIsolatedJarvis(business, 'recommend\n', {
+    lessons: [
+      { text: 'Qualify before contract when discovery evidence is incomplete' }
+    ]
+  });
+  const stdout = result.stdout ?? '';
+
+  assert.equal(result.status, 0);
+  assert.match(stdout, /PROSPECT SELECTION REQUIRED/);
+  assert.doesNotMatch(stdout, /Focus first on:/);
+  assert.doesNotMatch(stdout, /Focus first on: complete prospect qualification before contracting/);
+  assert.doesNotMatch(stdout, /LEARNING SIGNAL/);
+  assert.doesNotMatch(stdout, /Focus on converting the open opportunity/);
+});
+
+test('recommend preserves qualification, decision, approval and external-action safeguards', () => {
+  const unconfirmed = prospectFixture({
+    problem: 'SIMULATED recorded problem',
+    impact: 'SIMULATED recorded impact',
+    currentSolution: 'SIMULATED recorded current solution',
+    desiredOutcome: 'SIMULATED recorded desired outcome',
+    decisionMaker: 'SIMULATED recorded decision maker'
+  });
+  unconfirmed.prospects[0].qualification = {
+    status: 'READY FOR CONFIRMATION',
+    missing: []
+  };
+  unconfirmed.opportunities = [
+    { text: 'SIMULATED opportunity', status: 'OPEN' }
+  ];
+
+  const buyerRun = runIsolatedJarvis(unconfirmed, 'recommend\n');
+  const buyerStdout = buyerRun.result.stdout ?? '';
+
+  assert.equal(buyerRun.result.status, 0);
+  assert.match(buyerStdout, /Focus first on: complete discovery for Test prospect/);
+  assert.match(buyerStdout, /Prospect discovery is incomplete/);
+  assert.doesNotMatch(buyerStdout, /Focus on converting the open opportunity/);
+  assert.doesNotMatch(buyerStdout, /No major prospect qualification gap is recorded/);
+
+  const guarded = prospectFixture();
+  guarded.followUps = [
+    { text: 'Send contract to prospect', status: 'OPEN' }
+  ];
+  guarded.opportunities = [
+    { text: 'SIMULATED opportunity', status: 'OPEN' }
+  ];
+
+  const guardedRun = runIsolatedJarvis(
+    guarded,
+    'recommend\n',
+    {
+      decisions: [
+        {
+          id: 'decision-1',
+          decision: 'Complete qualification before contracting',
+          status: 'ACTIVE'
+        }
+      ],
+      approvals: [
+        {
+          approvalId: 'approval-1',
+          action: 'SIMULATED approval',
+          approvedBy: 'Zayn',
+          date: '2026-01-01T00:00:00.000Z',
+          status: 'ACTIVE'
+        }
+      ]
+    }
+  );
+  const guardedStdout = guardedRun.result.stdout ?? '';
+
+  assert.equal(guardedRun.result.status, 0);
+  assert.match(guardedStdout, /CONFLICT: Current follow-up may conflict with an active decision requiring qualification before contracting\./);
+  assert.match(guardedStdout, /JARVIS should not recommend contracting until Zayn changes or closes that decision\./);
+  assert.match(guardedStdout, /Approval is recorded, but execution still requires a separate execution step\./);
+  assert.match(guardedStdout, /No external action taken\. Zayn approval is required before execution\./);
+  assert.equal(guardedRun.researchCalls, 0);
+  assert.doesNotMatch(guardedStdout, /Thinking|AI request failed/);
+});
+
+test('action brain labels immediate-action scope without changing precedence', () => {
+  const business = prospectFixture();
+  business.followUps = [
+    { text: 'SIMULATED follow-up', status: 'OPEN' }
+  ];
+  business.opportunities = [
+    { text: 'SIMULATED opportunity', status: 'OPEN' }
+  ];
+
+  const { result } = runIsolatedJarvis(business, 'action brain\n');
+  const stdout = result.stdout ?? '';
+
+  assert.equal(result.status, 0);
+  assert.match(stdout, /NEXT ACTION/);
+  assert.match(stdout, /SCOPE: Immediate action only; not company-wide commercial direction\./);
+  assert.match(stdout, /Follow up: SIMULATED follow-up/);
+  assert.doesNotMatch(stdout, /Develop the open opportunity: SIMULATED opportunity/);
+
+  const selected = prospectFixture();
+  selected.prospects.push({
+    name: 'Second prospect',
+    details: 'Another test business',
+    status: 'NEW',
+    discovery: {}
+  });
+  selected.selectedProspectName = 'Second prospect';
+  selected.opportunities = [
+    { text: 'SIMULATED opportunity', status: 'OPEN' }
+  ];
+
+  const selectedRun = runIsolatedJarvis(selected, 'action brain\n');
+  const selectedStdout = selectedRun.result.stdout ?? '';
+
+  assert.equal(selectedRun.result.status, 0);
+  assert.match(selectedStdout, /Work the selected prospect: Second prospect/);
+  assert.doesNotMatch(selectedStdout, /Develop the open opportunity: SIMULATED opportunity/);
+});
+
+test('portfolio judgement commands leave protected state unchanged and trigger no external work', () => {
+  const seeds = {
+    'business.json': JSON.stringify({
+      prospects: [
+        { name: 'Test prospect', details: 'Test business', status: 'NEW', discovery: {} }
+      ],
+      opportunities: [{ text: 'SIMULATED opportunity', status: 'OPEN' }],
+      offers: [],
+      followUps: [{ text: 'SIMULATED follow-up', status: 'OPEN' }],
+      revenue: [],
+      marker: 'business-untouched'
+    }, null, 2),
+    'cofounder-state.json': JSON.stringify({
+      goals: [{ title: 'SIMULATED active goal', status: 'ACTIVE' }],
+      decisions: [],
+      approvals: [],
+      executions: [],
+      lessons: [],
+      research: [],
+      marker: 'state-untouched'
+    }, null, 2),
+    'memory.json': JSON.stringify([{ text: 'SIMULATED memory', marker: 'memory-untouched' }], null, 2),
+    'reminders.json': JSON.stringify([{ message: 'SIMULATED reminder', time: 9999999999999, marker: 'reminders-untouched' }], null, 2),
+    'tasks.json': JSON.stringify([{ text: 'SIMULATED task', marker: 'tasks-untouched' }], null, 2),
+    'cofounder-settings.json': JSON.stringify({ speechEnabled: false }, null, 2)
+  };
+
+  const { result, protectedFiles, researchCalls, capturedAIRequests } = runIsolatedJarvis(
+    null,
+    'zayzana focus\nrecommend\naction brain\n',
+    {},
+    {
+      seedProtectedFiles: seeds,
+      fakeResearch: true,
+      fakeAIResponse: true,
+      captureAIRequests: true
+    }
+  );
+
+  assert.equal(result.status, 0, 'stdout: ' + result.stdout + '\nstderr: ' + result.stderr);
+  for (const [name, expected] of Object.entries(seeds)) {
+    assert.equal(protectedFiles[name], expected, name + ' must remain byte-identical');
+  }
+  assert.equal(researchCalls, 0, 'no research tool must be invoked');
+  assert.equal((capturedAIRequests ?? []).length, 0, 'no AI request may be made');
+  assert.doesNotMatch(result.stdout ?? '', /Thinking|AI request failed/);
+});
+
+test('portfolio judgement views preserve first-record opportunity precedence', () => {
+  const business = prospectFixture();
+  business.prospects = [];
+  business.followUps = [];
+  business.opportunities = [
+    { text: 'First opportunity', status: 'OPEN' },
+    { text: 'Second opportunity', status: 'OPEN' }
+  ];
+
+  for (const command of ['zayzana focus', 'recommend', 'action brain']) {
+    const { result } = runIsolatedJarvis(business, command + '\n');
+    const stdout = result.stdout ?? '';
+    assert.equal(result.status, 0, command);
+    assert.match(stdout, /First opportunity/, command);
+    assert.doesNotMatch(stdout, /Second opportunity/, command);
+    assert.doesNotMatch(stdout, /PROSPECT SELECTION REQUIRED|Select a prospect/, command);
+  }
 });
