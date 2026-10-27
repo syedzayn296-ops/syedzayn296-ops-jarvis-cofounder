@@ -1,23 +1,145 @@
 const fs = require("fs");
+const path = require("node:path");
 const readline = require("readline");
 const { exec, spawn } = require("child_process");
+const stateStore = require("./state-store");
 
 const memoryFile = "memory.json";
 const tasksFile = "tasks.json";
 const remindersFile = "reminders.json";
 const businessFile = "business.json";
 
+// The production lock is anchored to the application directory, not to cwd.
+// Tests that exercise state-store directly can still inject their own lock path.
+// A live owner, ambiguous PID liveness, or malformed lock metadata fails closed;
+// no lock is deleted automatically. The operator must confirm that no Cofounder
+// process is running before removing an uncertain lock or .reclaim marker.
+const writerLockFile = path.join(__dirname, ".cofounder-state.lock");
+const writerLockOptions = Object.freeze({ lockFile: writerLockFile });
+
+// Transaction callbacks defer their output until the writer lock has been
+// released successfully. If the callback or release fails, the success text is
+// discarded and only the failure is surfaced.
+let protectedTransactionOutput = null;
+
+// Protected writes are authorized only by the exact capability created by
+// withWriterLock(). Primitive and non-extensible thrown values are normalized so
+// a release failure remains attachable and observable without replacing the
+// original failure as the primary error.
+function normalizeTransactionError(error) {
+    const isObject = error !== null &&
+        (typeof error === "object" || typeof error === "function");
+    let extensible = false;
+
+    if (isObject) {
+        try {
+            extensible = Object.isExtensible(error);
+        } catch (_) {
+            extensible = false;
+        }
+    }
+
+    if (extensible) return error;
+
+    let message = "Writer transaction callback failed.";
+
+    try {
+        message = isObject && typeof error.message === "string"
+            ? error.message
+            : String(error);
+    } catch (_) {
+        // Keep the wrapper usable even when the thrown value has hostile accessors.
+    }
+
+    const wrapped = new Error(message);
+    wrapped.cause = error;
+    wrapped.originalThrownValue = error;
+    return wrapped;
+}
+
+function normalizeTransactionResult(result) {
+    if (
+        result !== null &&
+        (typeof result === "object" || typeof result === "function") &&
+        typeof result.then === "function"
+    ) {
+        return Promise.resolve(result).catch(error => {
+            throw normalizeTransactionError(error);
+        });
+    }
+
+    return result;
+}
+
+function flushTransactionOutput(output) {
+    output.forEach(args => console.log(...args));
+}
+
+function withProtectedTransaction(operation) {
+    const output = [];
+    const previousOutput = protectedTransactionOutput;
+    protectedTransactionOutput = output;
+
+    let result;
+
+    try {
+        result = stateStore.withWriterLock(tx => {
+            try {
+                return normalizeTransactionResult(operation(tx));
+            } catch (error) {
+                throw normalizeTransactionError(error);
+            }
+        }, writerLockOptions);
+    } catch (error) {
+        protectedTransactionOutput = previousOutput;
+        throw error;
+    }
+
+    protectedTransactionOutput = previousOutput;
+
+    if (
+        result !== null &&
+        (typeof result === "object" || typeof result === "function") &&
+        typeof result.then === "function"
+    ) {
+        // Current production call sites are synchronous. For a future async
+        // callback, preserve release-failure propagation; output produced after
+        // this point is outside the synchronous deferral window.
+        return Promise.resolve(result).then(
+            value => {
+                flushTransactionOutput(output);
+                return value;
+            },
+            error => {
+                throw error;
+            }
+        );
+    }
+
+    flushTransactionOutput(output);
+    return result;
+}
+
+function isProtectedTransactionError(error) {
+    return Boolean(
+        error &&
+        typeof error.code === "string" &&
+        (error.code === "COFOUNDER_LOCKED" || error.code.startsWith("COFOUNDER_TX_"))
+    );
+}
+
 // --------------------------------------------------
 // SAFE JSON HELPERS
 // --------------------------------------------------
 
 function loadJson(file, fallback) {
-    try {
-        if (!fs.existsSync(file)) {
-            fs.writeFileSync(file, JSON.stringify(fallback, null, 2));
-            return fallback;
-        }
+    if (!fs.existsSync(file)) {
+        return withProtectedTransaction(tx =>
+            stateStore.createProtectedJsonIfAbsent(tx, file, fallback)
+        );
+    }
 
+    try {
         return JSON.parse(fs.readFileSync(file, "utf8"));
     } catch (error) {
         console.log(`Could not load ${file}. Using safe defaults.`);
@@ -25,26 +147,64 @@ function loadJson(file, fallback) {
     }
 }
 
-function saveJson(file, data) {
-    fs.writeFileSync(file, JSON.stringify(data, null, 2));
+function saveJson(tx, file, data) {
+    return stateStore.writeProtectedJson(tx, file, data);
+}
+
+// Read-only companion to loadJson for reporting paths: a missing file is never created and
+// a malformed file is never overwritten, so display commands cannot mutate local state.
+function readJson(file, fallback) {
+    try {
+        if (!fs.existsSync(file)) return fallback;
+
+        return JSON.parse(fs.readFileSync(file, "utf8"));
+    } catch (_) {
+        console.log(`Could not load ${file}. Using safe defaults.`);
+        return fallback;
+    }
+}
+
+function cloneJson(value) {
+    return JSON.parse(JSON.stringify(value));
+}
+
+// Required state for a command that must not silently continue from empty data. The thrown
+// message carries only the local file name, never an absolute path or raw parser text.
+function readRequiredJson(file) {
+    let raw;
+
+    try {
+        raw = fs.readFileSync(file, "utf8");
+    } catch (_) {
+        throw new Error(`Local state file "${file}" is missing or unreadable. Nothing was changed, so it can be restored safely.`);
+    }
+
+    try {
+        return JSON.parse(raw);
+    } catch (_) {
+        throw new Error(`Local state file "${file}" contains invalid JSON. It was left unchanged so it can be repaired.`);
+    }
 }
 
 // --------------------------------------------------
 // PERMANENT WINDOWS SPEECH (enabled by default)
 // --------------------------------------------------
 const speechSettingsFile = "cofounder-settings.json";
-const speechSettings = (() => {
+const speechSettings = withProtectedTransaction(tx => {
+    let current;
     try {
-        const current = fs.existsSync(speechSettingsFile)
+        current = fs.existsSync(speechSettingsFile)
             ? JSON.parse(fs.readFileSync(speechSettingsFile, "utf8"))
             : {};
-        const settings = { speechEnabled: current.speechEnabled !== false };
-        fs.writeFileSync(speechSettingsFile, JSON.stringify(settings, null, 2));
-        return settings;
     } catch (_) {
+        // A read/parse problem must not turn into a write of default settings.
         return { speechEnabled: true };
     }
-})();
+
+    const settings = { speechEnabled: current.speechEnabled !== false };
+    saveJson(tx, speechSettingsFile, settings);
+    return settings;
+});
 
 let speechQueue = Promise.resolve();
 const activeSpeakers = new Set();
@@ -125,16 +285,31 @@ function resolveActiveProspect(data, options = {}) {
     const prospects = Array.isArray(data?.prospects) ? data.prospects : [];
     const open = prospects.filter(item => item.status !== "CLOSED");
     const announce = options.announce !== false;
-    if (open.length === 0) return null;
     const selectedName = String(data.selectedProspectName || "").trim();
     if (selectedName) {
-        const matches = open.filter(item => String(item.name || "").trim().toLowerCase() === selectedName.toLowerCase());
-        if (matches.length === 1) return matches[0];
-        if (matches.length > 1) {
-            if (announce) console.log("Multiple open prospects share that name. Select a unique name.");
+        const matchesAcrossStatuses = prospects.filter(item =>
+            String(item.name || "").trim().toLowerCase() === selectedName.toLowerCase()
+        );
+        if (matchesAcrossStatuses.length > 1) {
+            if (announce) {
+                console.log("Multiple prospects share that name across statuses. Select a unique name.");
+                console.log("Command: select prospect <exact name>");
+            }
             return null;
         }
+
+        if (matchesAcrossStatuses.length === 1 && matchesAcrossStatuses[0].status !== "CLOSED") {
+            return matchesAcrossStatuses[0];
+        }
+
+        if (announce || (options.announceStale !== false && open.length <= 1)) {
+            console.log("Saved prospect selection is stale. Select an open prospect by exact name.");
+            console.log("Command: select prospect <exact name>");
+        }
+        return null;
     }
+
+    if (open.length === 0) return null;
     if (open.length === 1) return open[0];
     if (announce) {
         console.log("Multiple open prospects found. Select one first:");
@@ -180,18 +355,61 @@ function formatResearchClassification(query, result) {
     return output.length ? output.join("\n") : "No structured result titles/URLs detected.";
 }
 function saveResearchEntry(query, result, prospectName = null) {
-    const state = loadJson("cofounder-state.json", {});
-    if (!Array.isArray(state.research)) state.research = [];
+    // Web research runs outside the writer lock. The transaction rereads the
+    // current state and merges this result into that fresh copy before writing.
+    return withProtectedTransaction(tx => {
+        const state = readJson("cofounder-state.json", {});
+        if (!Array.isArray(state.research)) state.research = [];
 
-    state.research.push({
-        query,
-        result,
-        prospectName,
-        status: "UNVERIFIED",
-        createdAt: new Date().toISOString()
+        const sources = [];
+        let pendingTitle = null;
+
+        for (const line of String(result || "").split(/\r?\n/)) {
+            if (line.startsWith("Title: ")) {
+                pendingTitle = line.slice("Title: ".length).trim();
+                continue;
+            }
+
+            if (!line.startsWith("URL: ")) continue;
+
+            const url = line.slice("URL: ".length).trim();
+
+            if (!url) {
+                pendingTitle = null;
+                continue;
+            }
+
+            try {
+                const parsed = new URL(url);
+
+                if (!parsed.protocol || !parsed.hostname) {
+                    pendingTitle = null;
+                    continue;
+                }
+            } catch (_) {
+                pendingTitle = null;
+                continue;
+            }
+
+            const source = { url, support: "unresolved" };
+
+            if (pendingTitle) source.title = pendingTitle;
+
+            sources.push(source);
+            pendingTitle = null;
+        }
+
+        state.research.push({
+            query,
+            result,
+            prospectName,
+            status: "UNVERIFIED",
+            createdAt: new Date().toISOString(),
+            sources
+        });
+
+        saveJson(tx, "cofounder-state.json", state);
     });
-
-    saveJson("cofounder-state.json", state);
 }
 function detectCommercialOpportunity(researchEntries) {
     const entries = Array.isArray(researchEntries) ? researchEntries : [];
@@ -251,7 +469,7 @@ function detectCommercialOpportunity(researchEntries) {
     };
 }
 function showCommercialOpportunityDetector() {
-    const state = loadJson("cofounder-state.json", {});
+    const state = readJson("cofounder-state.json", {});
     const research = Array.isArray(state.research) ? state.research : [];
     const result = detectCommercialOpportunity(research);
 
@@ -290,7 +508,7 @@ function webResearch(query) {
             "objective=Find reliable current information relevant to the query. Return useful facts and sources for Cofounder research only."
         ];
 
-        exec("cmd.exe " + args.map(arg => `"${arg.replace(/"/g, '""')}"`).join(" "), (error, stdout, stderr) => {
+        exec("cmd.exe " + args.map(arg => `"${arg.replace(/"/g, '""')}"`).join(" "), { timeout: 45000 }, (error, stdout, stderr) => {
             if (error) {
                 reject(new Error(stderr || error.message));
                 return;
@@ -310,12 +528,22 @@ let memory = fs.existsSync(memoryFile) ? loadJson(memoryFile, []) : [];
 function remember(text) {
     if (!text) return;
 
-    memory.push({
-        text,
-        savedAt: new Date().toISOString()
+    withProtectedTransaction(tx => {
+        const current = readJson(memoryFile, null);
+        const list = Array.isArray(current)
+            ? current
+            : (Array.isArray(memory) ? cloneJson(memory) : []);
+
+        list.push({
+            text,
+            savedAt: new Date().toISOString()
+        });
+
+        saveJson(tx, memoryFile, list);
+        memory = list;
+        return list;
     });
 
-    saveJson(memoryFile, memory);
     console.log(`JARVIS > Remembered: ${text}`);
 }
 
@@ -342,13 +570,23 @@ let tasks = loadJson(tasksFile, []);
 function addTask(text) {
     if (!text) return;
 
-    tasks.push({
-        text,
-        completed: false,
-        createdAt: new Date().toISOString()
+    withProtectedTransaction(tx => {
+        const current = readJson(tasksFile, null);
+        const list = Array.isArray(current)
+            ? current
+            : (Array.isArray(tasks) ? cloneJson(tasks) : []);
+
+        list.push({
+            text,
+            completed: false,
+            createdAt: new Date().toISOString()
+        });
+
+        saveJson(tx, tasksFile, list);
+        tasks = list;
+        return list;
     });
 
-    saveJson(tasksFile, tasks);
     console.log(`JARVIS > Task added: ${text}`);
 }
 
@@ -370,29 +608,61 @@ function showTasks() {
 function completeTask(number) {
     const index = Number(number) - 1;
 
-    if (!Number.isInteger(index) || !tasks[index]) {
+    if (!Number.isInteger(index)) {
         console.log("JARVIS > Task not found.");
         return;
     }
 
-    tasks[index].completed = true;
-    saveJson(tasksFile, tasks);
+    const updated = withProtectedTransaction(tx => {
+        const current = readJson(tasksFile, null);
+        const list = Array.isArray(current)
+            ? current
+            : (Array.isArray(tasks) ? cloneJson(tasks) : []);
 
-    console.log(`JARVIS > Task completed: ${tasks[index].text}`);
+        if (!list[index]) return null;
+
+        list[index].completed = true;
+        saveJson(tx, tasksFile, list);
+        tasks = list;
+        return list;
+    });
+
+    if (!updated) {
+        console.log("JARVIS > Task not found.");
+        return;
+    }
+
+    console.log(`JARVIS > Task completed: ${updated[index].text}`);
 }
 
 function removeTask(number) {
     const index = Number(number) - 1;
 
-    if (!Number.isInteger(index) || !tasks[index]) {
+    if (!Number.isInteger(index)) {
         console.log("JARVIS > Task not found.");
         return;
     }
 
-    const removed = tasks.splice(index, 1)[0];
-    saveJson(tasksFile, tasks);
+    const updated = withProtectedTransaction(tx => {
+        const current = readJson(tasksFile, null);
+        const list = Array.isArray(current)
+            ? current
+            : (Array.isArray(tasks) ? cloneJson(tasks) : []);
 
-    console.log(`JARVIS > Task removed: ${removed.text}`);
+        if (!list[index]) return null;
+
+        const removed = list.splice(index, 1)[0];
+        saveJson(tx, tasksFile, list);
+        tasks = list;
+        return { list, removed };
+    });
+
+    if (!updated) {
+        console.log("JARVIS > Task not found.");
+        return;
+    }
+
+    console.log(`JARVIS > Task removed: ${updated.removed.text}`);
 }
 
 // --------------------------------------------------
@@ -421,17 +691,62 @@ function showReminders() {
 }
 
 function checkReminders() {
-    reminders.forEach((reminder) => {
+    const hasDueReminder = reminders.some((reminder) => {
         const reminderTime = reminder.time || reminder.dueAt;
+        return !reminder.fired && reminderTime && Date.now() >= reminderTime;
+    });
 
-        if (!reminder.fired && reminderTime && Date.now() >= reminderTime) {
-            console.log(
-                `\nJARVIS REMINDER: ${reminder.message}\n`
-            );
+    // Avoid taking the writer lock on every idle tick. Once a reminder is due,
+    // the fresh read and state transition happen inside one transaction.
+    if (!hasDueReminder) return;
 
-            reminder.fired = true;
-            saveJson(remindersFile, reminders);
+    let result;
+
+    try {
+        result = withProtectedTransaction(tx => {
+            const current = readJson(remindersFile, null);
+            const list = Array.isArray(current)
+                ? current
+                : (Array.isArray(reminders) ? cloneJson(reminders) : []);
+            const messages = [];
+
+            list.forEach((reminder) => {
+                const reminderTime = reminder.time || reminder.dueAt;
+
+                if (!reminder.fired && reminderTime && Date.now() >= reminderTime) {
+                    messages.push(reminder.message);
+                    reminder.fired = true;
+                }
+            });
+
+            if (messages.length > 0) {
+                saveJson(tx, remindersFile, list);
+            }
+
+            reminders = list;
+            return { list, messages };
+        });
+    } catch (error) {
+        const message = error && typeof error.message === "string"
+            ? error.message
+            : String(error);
+
+        // Another process holding the lock is a normal retry condition for the
+        // timer. Every other transaction/write/release failure is surfaced.
+        if (error && error.releaseError) {
+            console.log("\nJARVIS > Reminder check failed: " + message);
+            console.log("\nJARVIS > Reminder check release failed: " + error.releaseError.message);
+            return;
         }
+
+        if (error && error.code === "COFOUNDER_LOCKED") return;
+
+        console.log("\nJARVIS > Reminder check failed: " + message);
+        return;
+    }
+
+    result.messages.forEach((message) => {
+        console.log(`\nJARVIS REMINDER: ${message}\n`);
     });
 }
 
@@ -563,8 +878,18 @@ function openWebsite(name) {
         return;
     }
 
-    console.log(`JARVIS > Opening ${name}.`);
-    exec(`start "" "${url}"`);
+    // Report the attempt, not a confirmed launch: the outcome is only known once
+    // the shell reports back, and that report can fail. Supplying a callback also
+    // attaches an 'error' listener to the child process, so a failed launch is
+    // handled instead of surfacing as an unhandled 'error' event that terminates
+    // Cofounder.
+    console.log(`JARVIS > Attempting to open ${name}.`);
+    exec(`start "" "${url}"`, error => {
+        if (error) {
+            // Bounded message only: no filesystem paths or environment details.
+            console.log(`JARVIS > Could not open ${name}. The browser did not start.`);
+        }
+    });
 }
 
 // --------------------------------------------------
@@ -592,6 +917,38 @@ let business = (() => {
     }
 })();
 
+function readBusinessForMutation() {
+    const current = readJson(businessFile, null);
+    const source = current && typeof current === "object" && !Array.isArray(current)
+        ? current
+        : cloneJson(business);
+
+    for (const key of ["prospects", "opportunities", "offers", "followUps", "revenue"]) {
+        if (!Array.isArray(source[key])) source[key] = [];
+    }
+
+    return source;
+}
+
+// The read, in-memory mutation, and protected write all happen under one
+// transaction. Returning false from operation skips the write for display-only
+// paths that may need lazy initialization.
+function mutateBusiness(operation) {
+    const updated = withProtectedTransaction(tx => {
+        const current = readBusinessForMutation();
+        const shouldWrite = operation(current);
+
+        if (shouldWrite !== false) {
+            saveJson(tx, businessFile, current);
+        }
+
+        business = current;
+        return current;
+    });
+
+    return updated;
+}
+
 function showBusinessOverview() {
     console.log("\nJARVIS BUSINESS BRAIN");
     console.log("---------------------");
@@ -605,14 +962,14 @@ function showBusinessOverview() {
 function addProspect(name, details = "") {
     if (!name) return;
 
-    business.prospects.push({
-        name,
-        details,
-        status: "NEW",
-        createdAt: new Date().toISOString()
+    mutateBusiness((current) => {
+        current.prospects.push({
+            name,
+            details,
+            status: "NEW",
+            createdAt: new Date().toISOString()
+        });
     });
-
-    saveJson(businessFile, business);
 
     console.log(`JARVIS > Prospect added: ${name}`);
 }
@@ -636,13 +993,13 @@ function showProspects() {
 function addOpportunity(text) {
     if (!text) return;
 
-    business.opportunities.push({
-        text,
-        status: "OPEN",
-        createdAt: new Date().toISOString()
+    mutateBusiness((current) => {
+        current.opportunities.push({
+            text,
+            status: "OPEN",
+            createdAt: new Date().toISOString()
+        });
     });
-
-    saveJson(businessFile, business);
 
     console.log(`JARVIS > Opportunity recorded: ${text}`);
 }
@@ -666,13 +1023,13 @@ function showOpportunities() {
 function addOffer(text) {
     if (!text) return;
 
-    business.offers.push({
-        text,
-        status: "AVAILABLE",
-        createdAt: new Date().toISOString()
+    mutateBusiness((current) => {
+        current.offers.push({
+            text,
+            status: "AVAILABLE",
+            createdAt: new Date().toISOString()
+        });
     });
-
-    saveJson(businessFile, business);
 
     console.log(`JARVIS > Offer recorded: ${text}`);
 }
@@ -696,13 +1053,13 @@ function showOffers() {
 function addFollowUp(text) {
     if (!text) return;
 
-    business.followUps.push({
-        text,
-        status: "OPEN",
-        createdAt: new Date().toISOString()
+    mutateBusiness((current) => {
+        current.followUps.push({
+            text,
+            status: "OPEN",
+            createdAt: new Date().toISOString()
+        });
     });
-
-    saveJson(businessFile, business);
 
     console.log(`JARVIS > Follow-up recorded: ${text}`);
 }
@@ -731,13 +1088,13 @@ function addRevenue(amount, description) {
         return;
     }
 
-    business.revenue.push({
-        amount: numericAmount,
-        description: description || "",
-        recordedAt: new Date().toISOString()
+    mutateBusiness((current) => {
+        current.revenue.push({
+            amount: numericAmount,
+            description: description || "",
+            recordedAt: new Date().toISOString()
+        });
     });
-
-    saveJson(businessFile, business);
 
     console.log(
         `JARVIS > Revenue recorded: Amount ${numericAmount} | ${description || "No description"}`
@@ -769,6 +1126,38 @@ function showRevenue() {
 // --------------------------------------------------
 // STEP 15: ACTION BRAIN
 // --------------------------------------------------
+
+function getCommercialDirectionEntries(state) {
+    const groups = [
+        { key: "goals", label: "ACTIVE GOAL" },
+        { key: "decisions", label: "ACTIVE DECISION" }
+    ];
+    const entries = [];
+
+    for (const group of groups) {
+        const records = state && state[group.key];
+        if (!Array.isArray(records)) continue;
+
+        for (const record of records) {
+            if (!record || typeof record !== "object" || Array.isArray(record)) continue;
+            if (String(record.status || "").trim().toUpperCase() !== "ACTIVE") continue;
+            if (record.commercialDirection !== true) continue;
+            if (typeof record.text !== "string" || !record.text.trim()) continue;
+
+            const text = record.text.replace(/\s+/g, " ").trim();
+            entries.push(group.label + ": " + text);
+        }
+    }
+
+    return [...new Set(entries)];
+}
+
+function showCommercialDirection(state) {
+    const directions = getCommercialDirectionEntries(state);
+    console.log("\nCOMMERCIAL DIRECTION");
+    console.log("--------------------");
+    console.log("COMMERCIAL DIRECTION: " + (directions.length ? directions.join("; ") : "NOT ESTABLISHED"));
+}
 
 function showActionBrain() {
     console.log("\nJARVIS ACTION BRAIN");
@@ -803,7 +1192,11 @@ function showActionBrain() {
     console.log(`Open follow-ups: ${openFollowUps.length}`);
     console.log(`Recorded revenue: ${totalRevenue}`);
 
+    const directionState = loadJson("cofounder-state.json", {});
+    showCommercialDirection(directionState);
+
     console.log("\nNEXT ACTION");
+    console.log("SCOPE: Immediate action only; not company-wide commercial direction.");
 
     if (openFollowUps.length > 0) {
         console.log(
@@ -1158,33 +1551,40 @@ function showZayzanaFocus() {
         (item) => item.status === "OPEN"
     );
 
+    const directionState = loadJson("cofounder-state.json", {});
+    showCommercialDirection(directionState);
+
+    console.log("\nIMMEDIATE ACTION");
+    console.log("----------------");
+    console.log("SCOPE: Immediate action only; not company-wide commercial direction.");
+
     if (openFollowUps.length > 0) {
         console.log(
-            `CURRENT FOCUS: Follow-up | ${openFollowUps[0].text}`
+            `IMMEDIATE ACTION: Follow-up | ${openFollowUps[0].text}`
         );
         return;
     }
 
     if (activeProspect) {
-        console.log(`CURRENT FOCUS: Selected prospect | ${activeProspect.name}`);
+        console.log(`IMMEDIATE ACTION: Selected prospect | ${activeProspect.name}`);
         return;
     }
 
     if (openProspects.length > 1) {
-        console.log("CURRENT FOCUS: Select a prospect before choosing prospect-specific work.");
+        console.log("IMMEDIATE ACTION: Select a prospect before choosing prospect-specific work.");
         console.log("Command: select prospect <exact name>");
         return;
     }
 
     if (openOpportunities.length > 0) {
         console.log(
-            `CURRENT FOCUS: Opportunity | ${openOpportunities[0].text}`
+            `IMMEDIATE ACTION: Opportunity | ${openOpportunities[0].text}`
         );
         return;
     }
 
     console.log(
-        "CURRENT FOCUS: Find and record the next real business opportunity."
+        "IMMEDIATE ACTION: Find and record the next real business opportunity."
     );
 }
 
@@ -1264,7 +1664,7 @@ function showProspectIntelligence() {
         "Ask the prospect what business process is currently costing them the most time, money or repeated manual effort."
     );
 
-    const state = loadJson("cofounder-state.json", {});
+    const state = readJson("cofounder-state.json", {});
     const research = Array.isArray(state.research) ? state.research : [];
     const prospectResearch = research.filter((entry) =>
         entry.prospectName === prospect.name
@@ -1330,7 +1730,7 @@ function showProspectIntelligence() {
  // --------------------------------------------------
 
  function showProspectWorkspace() {
-    const businessData = loadJson("./business.json", {
+    const businessData = readJson("./business.json", {
         prospects: [],
         opportunities: [],
         offers: [],
@@ -1338,7 +1738,24 @@ function showProspectIntelligence() {
         revenue: []
     });
 
-    const prospect = resolveActiveProspect(businessData);
+    const selectedName = String(businessData.selectedProspectName || "").trim();
+    let prospect;
+
+    if (selectedName) {
+        const selection = resolveFigureProspect(businessData);
+
+        if (!selection.prospect && selection.reason !== "no-open-prospect") {
+            console.log("\nPROSPECT SELECTION REQUIRED");
+            console.log("---------------------------");
+            console.log(describeProspectResolution(selection.reason));
+            console.log("Use: select prospect <exact name>");
+            return;
+        }
+
+        prospect = selection.prospect;
+    } else {
+        prospect = resolveActiveProspect(businessData);
+    }
 
     console.log("\nJARVIS PROSPECT WORKSPACE");
     console.log("-------------------------");
@@ -1387,6 +1804,8 @@ function showProspectIntelligence() {
         ["Decision maker", discovery.decisionMaker],
         ["Budget", discovery.budget],
         ["Timeline", discovery.timeline],
+        ["Price", discovery.price],
+        ["Cost", discovery.cost],
         ["Notes", discovery.notes]
     ];
 
@@ -1479,6 +1898,14 @@ function showProspectIntelligence() {
         recommendationBlockers.push("Desired outcome is not recorded.");
     }
 
+    if (!discovery.currentSolution) {
+        recommendationBlockers.push("Current solution is not recorded.");
+    }
+
+    if (!discovery.decisionMaker) {
+        recommendationBlockers.push("Decision maker is not recorded.");
+    }
+
     if (fitStatus !== "FIT") {
         recommendationBlockers.push("No confirmed Zayzana capability fit.");
     }
@@ -1522,6 +1949,10 @@ function showProspectIntelligence() {
         console.log("Confidence:", recommendation.confidence);
         console.log("Next action:", recommendation.nextAction);
         console.log("Approval:", recommendation.approval);
+
+        console.log("\nCOMMERCIAL FIGURES");
+        console.log("------------------");
+        buildCommercialFigureLines(discovery).lines.forEach(line => console.log(line));
     }
 
     console.log("\nQUALIFICATION");
@@ -1588,22 +2019,47 @@ function showProspectDiscovery() {
          return;
      }
 
-     const prospect = resolveActiveProspect(business);
-    if (!prospect) return;
+     let prospect;
+
+     const selectedName = String(business.selectedProspectName || "").trim();
+
+     if (selectedName) {
+         const selection = resolveFigureProspect(business);
+
+         if (!selection.prospect) {
+             console.log("\nJARVIS > " + describeProspectResolution(selection.reason));
+             console.log("JARVIS > Use: select prospect <exact name>");
+             return;
+         }
+
+         prospect = selection.prospect;
+     } else {
+         prospect = resolveActiveProspect(business);
+         if (!prospect) return;
+     }
 
      if (!prospect.discovery) {
-         prospect.discovery = {
-             problem: "",
-             impact: "",
-             currentSolution: "",
-             desiredOutcome: "",
-             decisionMaker: "",
-             budget: "",
-             timeline: "",
-             notes: ""
-         };
+         const updated = mutateBusiness((current) => {
+             const freshResolution = resolveFigureProspect(current);
+             const fresh = freshResolution.prospect;
+             if (!fresh || fresh.discovery) return false;
 
-         saveJson(businessFile, business);
+             fresh.discovery = {
+                 problem: "",
+                 impact: "",
+                 currentSolution: "",
+                 desiredOutcome: "",
+                 decisionMaker: "",
+                 budget: "",
+                 timeline: "",
+                 notes: ""
+             };
+
+             return true;
+         });
+
+         prospect = resolveFigureProspect(updated).prospect;
+         if (!prospect) return;
      }
 
      const d = prospect.discovery;
@@ -1634,7 +2090,7 @@ function showProspectDiscovery() {
      console.log("6. Is there a budget or commercial constraint?");
      console.log("7. When would you want this solved?");
 
-     const state = loadJson("cofounder-state.json", {});
+     const state = readJson("cofounder-state.json", {});
     const research = Array.isArray(state.research) ? state.research : [];
     const prospectResearch = research.filter((entry) =>
         entry.prospectName === prospect.name
@@ -1765,8 +2221,8 @@ function decide(input) {
 }
 
 function worldModel() {
-    const state = loadJson("cofounder-state.json", {});
-    const currentBusiness = loadJson(businessFile, {
+    const state = readJson("cofounder-state.json", {});
+    const currentBusiness = readJson(businessFile, {
         prospects: [],
         opportunities: [],
         offers: [],
@@ -1813,7 +2269,7 @@ function worldModel() {
 function founderDashboard() {
     const world = worldModel();
     const heartbeat = evaluateHeartbeat();
-    const state = loadJson("cofounder-state.json", {});
+    const state = readJson("cofounder-state.json", {});
     const executions = Array.isArray(state.executions) ? state.executions : [];
 
     return {
@@ -1886,7 +2342,7 @@ function evaluateHeartbeat() {
         });
     }
 
-    const state = loadJson("cofounder-state.json", {});
+    const state = readJson("cofounder-state.json", {});
     const activeApprovals = Array.isArray(state.approvals) ? state.approvals.filter(a => a.status === "ACTIVE") : [];
 
     if (activeApprovals.length > 0) {
@@ -2267,7 +2723,9 @@ function buildCofounderMessage(prompt) {
         "You are Cofounder, Zayzana Tech's strategic AI partner in South Africa.",
         "Use the company context and conversation history below.",
         "Answer the user's actual latest request first. Do not redirect ordinary questions to business priorities or treat unrelated questions as distractions.",
-        "For live information such as weather, use an available tool when one exists. If no live-data tool is available, say so briefly and honestly; do not pretend to have checked it.",
+        "OPTIONAL LOCAL STATE: business.json, cofounder-state.json and memory.json are optional local files. Missing, empty or unreadable files, and empty prospect records, are normal. They must never be a reason to refuse, delay, water down or redirect a general, strategic, planning or public-research task, and you must not ask Zayn to repair local files before answering an unrelated request.",
+        "When Zayn gives a clear instruction, carry it out and produce the requested deliverable. Do not answer with only a plan, an advisory-board review, or a request for permission that Zayn has already given; ask a question only when a genuinely missing fact blocks a correct answer.",
+        "LIVE RESEARCH: You cannot browse the web inside this message. Never present model knowledge as live, verified or freshly researched, and never invent sources, URLs, businesses or contact details. If a task needs current public information such as real businesses, prices, news or websites, reply with exactly one line and nothing else: RESEARCH_REQUEST: <a specific search query>. The system will run a real web search and return the results for you to answer from. Do not use RESEARCH_REQUEST for questions you can already answer from the context above.",
         "Only bring up sales goals or pipeline follow-ups when relevant to the user's request or when the user asks for business priorities.",
         "Answer follow-up questions using earlier turns. Do not ask the user to repeat facts already supplied.",
         "Distinguish verified facts from assumptions and unknowns. Never invent capabilities, prospects, revenue, pricing evidence, or completed actions.",
@@ -2280,6 +2738,7 @@ function buildCofounderMessage(prompt) {
         "For commercial or strategic decisions, run an internal advisory board before answering: Commercial Strategist assesses cash flow, time-to-revenue, pricing and the route to a buyer; Customer/Market Analyst checks the buyer problem, demand evidence, alternatives and access to decision-makers; Sceptic/Risk Adviser challenges assumptions, hidden costs, delivery risk and reasons to kill the idea; Chair reconciles disagreements and chooses the best next move.",
         "For competing opportunities, compare likelihood of payment, time to first cash, cost to test, repeatability, owned-asset value and strategic fit. State the evidence and uncertainty behind the comparison; do not invent scores or claim research that was not actually performed.",
         "Return one ranked recommendation, the strongest reason against it, the most important unknown, a clear kill criterion, and the cheapest next validation step. Do not perform theatrical multi-agent dialogue unless asked; show concise conclusions and preserve founder approval for external actions.",
+        "NUMERICAL EVIDENCE DISCIPLINE: Use only figures supplied in this conversation and valid calculations from them. Never invent or infer budget amounts, budget percentages, spending limits, statistics, benchmarks, sample sizes, timelines, conversion rates, numerical thresholds or any other unsupported quantitative recommendation. Do not introduce illustrative numerical placeholders, even when labelled illustrative, if the user has prohibited invented numbers; offer estimates only when the user explicitly authorises them. An available budget is not permission to spend it and never implies approval for spending. If the evidence cannot establish a numerical threshold or budget allocation, say so explicitly and offer a qualitative alternative instead.",
         "Discover first. Qualify second. Recommend third. Execute only after Zayn approves.",
         "",
         getCofounderContext(),
@@ -2370,7 +2829,7 @@ function needsCommercialDeliverableAudit(prompt) {
     return asksForArtifact && namesCommercialArtifact;
 }
 
-function buildCommercialDeliverableAuditMessage(originalPrompt, draft) {
+function buildCommercialDeliverableAuditMessage(originalPrompt, draft, baseMessage) {
     return [
         "You are Cofounder's independent commercial evidence and delivery reviewer.",
         "Review the draft against the user request and the company/local-record context below. The first model pass is not evidence.",
@@ -2385,13 +2844,36 @@ function buildCommercialDeliverableAuditMessage(originalPrompt, draft) {
         "7. Keep external actions unexecuted; provide drafts only. Finish with one recommendation and one next action.",
         "",
         "CONVERSATION AND COMPANY CONTEXT (including relevant prior turns):",
-        buildCofounderMessage(originalPrompt),
+        baseMessage,
         "",
         "ORIGINAL USER REQUEST:",
         String(originalPrompt),
         "",
         "DRAFT TO AUDIT AND CORRECT:",
         String(draft)
+    ].join("\n");
+}
+
+function extractResearchRequest(response) {
+    const text = String(response || "").trim();
+    if (!/^RESEARCH_REQUEST\s*:/i.test(text)) return null;
+    const firstLine = text.split(/\r?\n/)[0];
+    const query = firstLine.replace(/^RESEARCH_REQUEST\s*:/i, "").trim();
+    return query || null;
+}
+
+function buildResearchGroundedMessage(baseMessage, query, result, errorMessage) {
+    return [
+        baseMessage,
+        "",
+        "LIVE WEB RESEARCH RESULTS (a real web search was executed just now; treat this as external, unverified evidence, not confirmed prospect fact):",
+        "SEARCH QUERY: " + query,
+        result ? String(result) : "[The live web search tool failed: " + errorMessage + "]",
+        "",
+        "Answer Zayn's original request now, using the live search results above as the only source for external facts.",
+        "Cite the source URLs that appear in the results. Do not add facts, businesses, contacts or URLs that are not present in the results.",
+        "If the results are insufficient, or the search failed, state exactly what is missing instead of inventing it.",
+        "Do not output another RESEARCH_REQUEST line."
     ].join("\n");
 }
 
@@ -2403,40 +2885,87 @@ async function askCofounderAI(prompt) {
     }
     activeRequestCancelled = false;
     activeAiRequest = true;
-    const controller = new AbortController();
-    activeAiController = controller;
     const timeoutMs = Number(process.env.COFOUNDER_AI_TIMEOUT_MS) || 45000;
-    const timer = setTimeout(() => {
-        if (!controller.signal.aborted) {
-            controller.abort(new Error(provider + " request timed out after " + timeoutMs + "ms."));
+
+    // Every provider call gets its own bounded timeout. A single timer shared
+    // across the whole workflow could expire during the separately bounded
+    // research step (or across cumulative stages) and abort a grounded answer
+    // even after a successful search. Each stage still runs at most once, so no
+    // retries or repeated searches are introduced.
+    async function callProvider(providerMessage) {
+        const controller = new AbortController();
+        activeAiController = controller;
+        const timer = setTimeout(() => {
+            if (!controller.signal.aborted) {
+                controller.abort(new Error(provider + " request timed out after " + timeoutMs + "ms."));
+            }
+        }, timeoutMs);
+        try {
+            return provider === "ollama"
+                ? await requestOllama(providerMessage, controller.signal)
+                : await requestGemini(providerMessage, controller.signal);
+        } catch (error) {
+            if (controller.signal.aborted && controller.signal.reason instanceof Error) {
+                throw controller.signal.reason;
+            }
+            throw error;
+        } finally {
+            clearTimeout(timer);
+            if (activeAiController === controller) activeAiController = null;
         }
-    }, timeoutMs);
+    }
+
     try {
-        let response = provider === "ollama"
-            ? await requestOllama(message, controller.signal)
-            : await requestGemini(message, controller.signal);
+        let response = await callProvider(message);
         if (activeRequestCancelled) throw new Error("Request cancelled by Zayn.");
+
+        // Bounded, single live-research round. The model may request one real
+        // web search; it is executed once through the existing research tool
+        // (never retried automatically), and the answer is then grounded on the
+        // returned sources. If the tool is unavailable the failure is reported,
+        // never invented.
+        const researchQuery = extractResearchRequest(response);
+        if (researchQuery) {
+            console.log("COFOUNDER > Live web research requested. Running the existing research tool...");
+            let researchResult = null;
+            let researchError = null;
+            try {
+                researchResult = await webResearch(researchQuery);
+            } catch (error) {
+                researchError = error && error.message ? error.message : String(error);
+            }
+            if (activeRequestCancelled) throw new Error("Request cancelled by Zayn.");
+            if (researchResult) {
+                // Results are used only for this response. They are deliberately
+                // NOT persisted: writing research evidence would modify the
+                // protected user-data file cofounder-state.json.
+                console.log("COFOUNDER > Live web research returned. Grounding the answer on the real results.");
+            } else {
+                console.log("COFOUNDER > Live web research failed: " + researchError);
+            }
+            const groundedMessage = buildResearchGroundedMessage(message, researchQuery, researchResult, researchError);
+            response = await callProvider(groundedMessage);
+            if (activeRequestCancelled) throw new Error("Request cancelled by Zayn.");
+        }
 
         if (needsCommercialDeliverableAudit(prompt)) {
             console.log("COFOUNDER > Running commercial evidence and delivery audit...");
-            const auditMessage = buildCommercialDeliverableAuditMessage(prompt, response);
-            response = provider === "ollama"
-                ? await requestOllama(auditMessage, controller.signal)
-                : await requestGemini(auditMessage, controller.signal);
+            const auditMessage = buildCommercialDeliverableAuditMessage(prompt, response, message);
+            response = await callProvider(auditMessage);
             if (activeRequestCancelled) throw new Error("Request cancelled by Zayn.");
+        }
+
+        // Never leak the internal research protocol to the user.
+        if (/^\s*RESEARCH_REQUEST\s*:/i.test(response)) {
+            response = "I could not complete that live web research request, so I will not guess. Try the explicit command: research: <query>";
         }
 
         recordConversationTurn(prompt, response);
         return response;
     } catch (error) {
         if (activeRequestCancelled) throw new Error("Request cancelled by Zayn.");
-        if (controller.signal.aborted && controller.signal.reason instanceof Error) {
-            throw controller.signal.reason;
-        }
         throw error;
     } finally {
-        clearTimeout(timer);
-        if (activeAiController === controller) activeAiController = null;
         activeAiRequest = false;
     }
 }
@@ -2490,6 +3019,7 @@ function showDailyBriefing() {
         const missing = [
             ["problem", "the confirmed business problem"],
             ["impact", "the impact of the problem"],
+            ["currentSolution", "the current solution"],
             ["desiredOutcome", "the desired measurable outcome"],
             ["decisionMaker", "the decision maker"],
             ["budget", "the budget or spending range"],
@@ -2663,18 +3193,29 @@ function handleCommand(input) {
 
     if (lower.startsWith("select prospect ")) {
         const requestedName = trimmed.slice("select prospect ".length).trim();
-        const open = (business.prospects || []).filter(item => item.status !== "CLOSED");
-        const matches = open.filter(item => String(item.name || "").trim().toLowerCase() === requestedName.toLowerCase());
-        if (!requestedName || matches.length !== 1) {
-            console.log(matches.length > 1 ? "More than one open prospect has that name; use a unique name." : "No unique open prospect matched that name.");
-            console.log("Open prospects:");
-            open.forEach(item => console.log("- " + item.name));
+
+        return withProtectedTransaction(tx => {
+            const currentBusiness = readBusinessForMutation();
+            const prospects = Array.isArray(currentBusiness.prospects) ? currentBusiness.prospects : [];
+            const open = prospects.filter(item => item.status !== "CLOSED");
+            const matches = prospects.filter(item =>
+                String(item.name || "").trim().toLowerCase() === requestedName.toLowerCase()
+            );
+
+            if (!requestedName || matches.length !== 1 || matches[0].status === "CLOSED") {
+                console.log(matches.length > 1 ? "More than one prospect has that name; use a unique name." : "No unique open prospect matched that name.");
+                console.log("Open prospects:");
+                open.forEach(item => console.log("- " + item.name));
+                console.log("Command: select prospect <exact name>");
+                return true;
+            }
+
+            currentBusiness.selectedProspectName = matches[0].name;
+            saveJson(tx, businessFile, currentBusiness);
+            business = currentBusiness;
+            console.log("Selected prospect: " + matches[0].name);
             return true;
-        }
-        business.selectedProspectName = matches[0].name;
-        saveJson(businessFile, business);
-        console.log("Selected prospect: " + matches[0].name);
-        return true;
+        });
     }
 
 
@@ -2791,7 +3332,7 @@ if (lower === "heartbeat" || lower === "cofounder heartbeat") {
         return;
     }
     if (lower === "research-latest") {
-        const state = loadJson("cofounder-state.json", {});
+        const state = readJson("cofounder-state.json", {});
         const latest = Array.isArray(state.research) ? state.research.at(-1) : null;
 
         console.log("\nJARVIS LATEST RESEARCH");
@@ -2811,22 +3352,27 @@ if (lower === "heartbeat" || lower === "cofounder heartbeat") {
         return;
     }
 
-    if (lower.startsWith("research ")) {
-        let query = trimmed.slice("research ".length).trim();
+    if (lower === "research") {
+        console.log("JARVIS > Please provide a research query.");
+        return;
+    }
+
+    if (lower.startsWith("research:")) {
+        let query = trimmed.slice("research:".length).trim();
         let researchProspectName = null;
 
-        // Optional explicit association: research for Prospect Name: search query
+        // Optional explicit association: research: for Prospect Name: search query
         if (query.toLowerCase().startsWith("for ") && query.includes(":")) {
             const separator = query.indexOf(":");
             const requestedProspectName = query.slice(4, separator).trim();
             query = query.slice(separator + 1).trim();
 
             if (!requestedProspectName || !query) {
-                console.log("Usage: research for Prospect Name: research query");
+                console.log("Usage: research: for Prospect Name: research query");
                 return;
             }
 
-            const researchBusiness = loadJson("business.json", { prospects: [] });
+            const researchBusiness = readJson("business.json", { prospects: [] });
             const matches = (researchBusiness.prospects || []).filter(prospect =>
                 prospect.status !== "CLOSED" &&
                 typeof prospect.name === "string" &&
@@ -2851,7 +3397,7 @@ if (lower === "heartbeat" || lower === "cofounder heartbeat") {
         console.log("------------------");
         console.log("Query: " + query);
         console.log("Prospect: " + (researchProspectName || "Unassigned"));
-        console.log('Use "research for Prospect Name: query" to associate research deliberately.');
+        console.log('Use "research: for Prospect Name: query" to associate research deliberately.');
         console.log("Research only. No external action will be taken.");
 
         webResearch(query)
@@ -2868,47 +3414,64 @@ if (lower === "heartbeat" || lower === "cofounder heartbeat") {
                 saveResearchEntry(query, result, researchProspectName);
             })
             .catch(error => {
+                const message = error && typeof error.message === "string"
+                    ? error.message
+                    : String(error);
                 console.log("\nRESEARCH ERROR");
                 console.log("--------------");
-                console.log(error.message);
+                console.log(message);
+
+                if (error && error.releaseError) {
+                    const releaseMessage = error.releaseError &&
+                        typeof error.releaseError.message === "string"
+                        ? error.releaseError.message
+                        : String(error.releaseError);
+                    console.log("\nRESEARCH RELEASE ERROR");
+                    console.log("----------------------");
+                    console.log(releaseMessage);
+                }
             });
 
         return;
     }
     if (lower.startsWith("record decision ")) {
         const decisionText = trimmed.slice("record decision ".length).trim();
-        const stateFile = "cofounder-state.json";
-        const state = JSON.parse(fs.readFileSync(stateFile, "utf8"));
 
-        if (!Array.isArray(state.decisions)) state.decisions = [];
+        return withProtectedTransaction(tx => {
+            const stateFile = "cofounder-state.json";
+            const state = readRequiredJson(stateFile);
 
-        const record = {
-            id: "decision-" + (state.decisions.length + 1),
-            decision: decisionText,
-            reason: "Recorded by Zayn",
-            evidence: [],
-            date: new Date().toISOString(),
-            status: "ACTIVE"
-        };
+            if (!Array.isArray(state.decisions)) state.decisions = [];
 
-        state.decisions.push(record);
-        fs.writeFileSync(stateFile, JSON.stringify(state, null, 2), "utf8");
+            const record = {
+                id: "decision-" + (state.decisions.length + 1),
+                decision: decisionText,
+                text: decisionText,
+                reason: "Recorded by Zayn",
+                evidence: [],
+                date: new Date().toISOString(),
+                status: "ACTIVE"
+            };
 
-        console.log("");
-        console.log("JARVIS DECISION RECORDED");
-        console.log("-------------------------");
-        console.log("Decision: " + record.decision);
-        console.log("Reason: " + record.reason);
-        console.log("Evidence: none recorded");
-        console.log("Status: " + record.status);
-        console.log("Date: " + record.date);
+            state.decisions.push(record);
+            saveJson(tx, stateFile, state);
 
-        return true;
+            console.log("");
+            console.log("JARVIS DECISION RECORDED");
+            console.log("-------------------------");
+            console.log("Decision: " + record.decision);
+            console.log("Reason: " + record.reason);
+            console.log("Evidence: none recorded");
+            console.log("Status: " + record.status);
+            console.log("Date: " + record.date);
+
+            return true;
+        });
     }
 
     if (lower === "show decisions" || lower === "decisions" || lower === "decision history") {
         const stateFile = "cofounder-state.json";
-        const state = JSON.parse(fs.readFileSync(stateFile, "utf8"));
+        const state = readJson(stateFile, {});
         const decisions = Array.isArray(state.decisions) ? state.decisions : [];
 
         console.log("");
@@ -2938,216 +3501,273 @@ if (lower === "heartbeat" || lower === "cofounder heartbeat") {
     if (lower.startsWith("close decision ")) {
         const numberText = trimmed.slice("close decision ".length).trim();
         const number = parseInt(numberText, 10);
-        const stateFile = "cofounder-state.json";
-        const state = JSON.parse(fs.readFileSync(stateFile, "utf8"));
-        const decisions = Array.isArray(state.decisions) ? state.decisions : [];
 
-        if (!Number.isInteger(number) || number < 1 || number > decisions.length) {
+        return withProtectedTransaction(tx => {
+            const stateFile = "cofounder-state.json";
+            const state = readRequiredJson(stateFile);
+            const decisions = Array.isArray(state.decisions) ? state.decisions : [];
+
+            if (!Number.isInteger(number) || number < 1 || number > decisions.length) {
+                console.log("");
+                console.log("JARVIS DECISION UPDATE");
+                console.log("----------------------");
+                console.log("Invalid decision number.");
+                console.log("Use: close decision <number>");
+                console.log("Use show decisions to see the decision numbers.");
+                return true;
+            }
+
+            const decision = decisions[number - 1];
+            const decisionText = decision.decision || decision.text || "Unknown decision";
+
+            if (decision.status === "CLOSED") {
+                console.log("");
+                console.log("Decision is already CLOSED.");
+                return true;
+            }
+
+            decision.status = "CLOSED";
+            decision.closedDate = new Date().toISOString();
+            decision.closedBy = "Zayn";
+
+            const linkedApprovals = Array.isArray(state.approvals)
+                ? state.approvals.filter(a => a.status === "ACTIVE" && a.decisionNumber === number)
+                : [];
+            linkedApprovals.forEach(a => {
+                a.status = "STALE";
+                a.staleDate = decision.closedDate;
+                a.staleReason = "Linked decision was closed.";
+            });
+
+            saveJson(tx, stateFile, state);
+
             console.log("");
-            console.log("JARVIS DECISION UPDATE");
+            console.log("JARVIS DECISION CLOSED");
             console.log("----------------------");
-            console.log("Invalid decision number.");
-            console.log("Use: close decision <number>");
-            console.log("Use show decisions to see the decision numbers.");
+            console.log("Decision: " + decisionText);
+            console.log("Status: CLOSED");
+            console.log("Closed by: Zayn");
+            if (linkedApprovals.length > 0) {
+                console.log("Linked active approvals marked STALE.");
+            }
+            console.log("The decision remains in history but is no longer an active constraint.");
+
             return true;
-        }
-
-        const decision = decisions[number - 1];
-        const decisionText = decision.decision || decision.text || "Unknown decision";
-
-        if (decision.status === "CLOSED") {
-            console.log("");
-            console.log("Decision is already CLOSED.");
-            return true;
-        }
-
-        decision.status = "CLOSED";
-        decision.closedDate = new Date().toISOString();
-        decision.closedBy = "Zayn";
-
-        const linkedApprovals = Array.isArray(state.approvals)
-            ? state.approvals.filter(a => a.status === "ACTIVE" && a.decisionNumber === number)
-            : [];
-        linkedApprovals.forEach(a => {
-            a.status = "STALE";
-            a.staleDate = decision.closedDate;
-            a.staleReason = "Linked decision was closed.";
         });
-
-        fs.writeFileSync(stateFile, JSON.stringify(state, null, 2), "utf8");
-
-        console.log("");
-        console.log("JARVIS DECISION CLOSED");
-        console.log("----------------------");
-        console.log("Decision: " + decisionText);
-        console.log("Status: CLOSED");
-        console.log("Closed by: Zayn");
-        if (linkedApprovals.length > 0) {
-            console.log("Linked active approvals marked STALE.");
-        }
-        console.log("The decision remains in history but is no longer an active constraint.");
-
-        return true;
     }
 
     if (lower.startsWith("decision reason ")) {
         const parts = trimmed.slice("decision reason ".length).trim().split(" ");
         const number = parseInt(parts.shift(), 10);
         const reason = parts.join(" ").trim();
-        const stateFile = "cofounder-state.json";
-        const state = JSON.parse(fs.readFileSync(stateFile, "utf8"));
-        const decisions = Array.isArray(state.decisions) ? state.decisions : [];
 
-        if (!Number.isInteger(number) || number < 1 || number > decisions.length || !reason) {
+        return withProtectedTransaction(tx => {
+            const stateFile = "cofounder-state.json";
+            const state = readRequiredJson(stateFile);
+            const decisions = Array.isArray(state.decisions) ? state.decisions : [];
+
+            if (!Number.isInteger(number) || number < 1 || number > decisions.length || !reason) {
+                console.log("");
+                console.log("JARVIS DECISION REASON");
+                console.log("----------------------");
+                console.log("Use: decision reason <number> <reason>");
+                return true;
+            }
+
+            const decision = decisions[number - 1];
+            decision.reason = reason;
+
+            saveJson(tx, stateFile, state);
+
             console.log("");
-            console.log("JARVIS DECISION REASON");
-            console.log("----------------------");
-            console.log("Use: decision reason <number> <reason>");
+            console.log("JARVIS DECISION REASON UPDATED");
+            console.log("-------------------------------");
+            console.log("Decision: " + (decision.decision || decision.text || "Unknown decision"));
+            console.log("Reason: " + decision.reason);
+
             return true;
-        }
-
-        const decision = decisions[number - 1];
-        decision.reason = reason;
-
-        fs.writeFileSync(stateFile, JSON.stringify(state, null, 2), "utf8");
-
-        console.log("");
-        console.log("JARVIS DECISION REASON UPDATED");
-        console.log("-------------------------------");
-        console.log("Decision: " + (decision.decision || decision.text || "Unknown decision"));
-        console.log("Reason: " + decision.reason);
-
-        return true;
+        });
     }
 
     if (lower.startsWith("decision evidence ")) {
         const parts = trimmed.slice("decision evidence ".length).trim().split(" ");
         const number = parseInt(parts.shift(), 10);
         const evidenceText = parts.join(" ").trim();
-        const stateFile = "cofounder-state.json";
-        const state = JSON.parse(fs.readFileSync(stateFile, "utf8"));
-        const decisions = Array.isArray(state.decisions) ? state.decisions : [];
 
-        if (!Number.isInteger(number) || number < 1 || number > decisions.length || !evidenceText) {
+        return withProtectedTransaction(tx => {
+            const stateFile = "cofounder-state.json";
+            const state = readRequiredJson(stateFile);
+            const decisions = Array.isArray(state.decisions) ? state.decisions : [];
+
+            if (!Number.isInteger(number) || number < 1 || number > decisions.length || !evidenceText) {
+                console.log("");
+                console.log("JARVIS DECISION EVIDENCE");
+                console.log("------------------------");
+                console.log("Use: decision evidence <number> <evidence>");
+                return true;
+            }
+
+            const decision = decisions[number - 1];
+            if (!Array.isArray(decision.evidence)) decision.evidence = [];
+            decision.evidence.push(evidenceText);
+
+            saveJson(tx, stateFile, state);
+
             console.log("");
-            console.log("JARVIS DECISION EVIDENCE");
-            console.log("------------------------");
-            console.log("Use: decision evidence <number> <evidence>");
+            console.log("JARVIS DECISION EVIDENCE ADDED");
+            console.log("-------------------------------");
+            console.log("Decision: " + (decision.decision || decision.text || "Unknown decision"));
+            console.log("Evidence: " + evidenceText);
+            console.log("Evidence count: " + decision.evidence.length);
+
             return true;
-        }
-
-        const decision = decisions[number - 1];
-        if (!Array.isArray(decision.evidence)) decision.evidence = [];
-        decision.evidence.push(evidenceText);
-
-        fs.writeFileSync(stateFile, JSON.stringify(state, null, 2), "utf8");
-
-        console.log("");
-        console.log("JARVIS DECISION EVIDENCE ADDED");
-        console.log("-------------------------------");
-        console.log("Decision: " + (decision.decision || decision.text || "Unknown decision"));
-        console.log("Evidence: " + evidenceText);
-        console.log("Evidence count: " + decision.evidence.length);
-
-        return true;
+        });
     }
 
     if (lower.startsWith("decision outcome ")) {
         const parts = trimmed.slice("decision outcome ".length).trim().split(" ");
         const number = parseInt(parts.shift(), 10);
         const outcomeText = parts.join(" ").trim();
-        const stateFile = "cofounder-state.json";
-        const state = JSON.parse(fs.readFileSync(stateFile, "utf8"));
-        const decisions = Array.isArray(state.decisions) ? state.decisions : [];
 
-        if (!Number.isInteger(number) || number < 1 || number > decisions.length || !outcomeText) {
+        return withProtectedTransaction(tx => {
+            const stateFile = "cofounder-state.json";
+            const state = readRequiredJson(stateFile);
+            const decisions = Array.isArray(state.decisions) ? state.decisions : [];
+
+            if (!Number.isInteger(number) || number < 1 || number > decisions.length || !outcomeText) {
+                console.log("");
+                console.log("JARVIS DECISION OUTCOME");
+                console.log("-----------------------");
+                console.log("Use: decision outcome <number> <what happened>");
+                return true;
+            }
+
+            const decision = decisions[number - 1];
+            decision.outcome = outcomeText;
+            decision.outcomeDate = new Date().toISOString();
+            decision.outcomeDecisionId = decision.id || ("decision-" + number);
+
+            saveJson(tx, stateFile, state);
+
             console.log("");
-            console.log("JARVIS DECISION OUTCOME");
-            console.log("-----------------------");
-            console.log("Use: decision outcome <number> <what happened>");
+            console.log("JARVIS DECISION OUTCOME RECORDED");
+            console.log("---------------------------------");
+            console.log("Decision: " + (decision.decision || decision.text || "Unknown decision"));
+            console.log("Outcome: " + decision.outcome);
+            console.log("Outcome date: " + decision.outcomeDate);
+
             return true;
-        }
-
-        const decision = decisions[number - 1];
-        decision.outcome = outcomeText;
-        decision.outcomeDate = new Date().toISOString();
-        decision.outcomeDecisionId = decision.id || ("decision-" + number);
-
-        fs.writeFileSync(stateFile, JSON.stringify(state, null, 2), "utf8");
-
-        console.log("");
-        console.log("JARVIS DECISION OUTCOME RECORDED");
-        console.log("---------------------------------");
-        console.log("Decision: " + (decision.decision || decision.text || "Unknown decision"));
-        console.log("Outcome: " + decision.outcome);
-        console.log("Outcome date: " + decision.outcomeDate);
-
-        return true;
+        });
     }
 
     if (lower.startsWith("decision lesson ")) {
         const parts = trimmed.slice("decision lesson ".length).trim().split(" ");
         const number = parseInt(parts.shift(), 10);
         const lessonText = parts.join(" ").trim();
-        const stateFile = "cofounder-state.json";
-        const state = JSON.parse(fs.readFileSync(stateFile, "utf8"));
-        const decisions = Array.isArray(state.decisions) ? state.decisions : [];
 
-        if (!Number.isInteger(number) || number < 1 || number > decisions.length || !lessonText) {
+        return withProtectedTransaction(tx => {
+            const stateFile = "cofounder-state.json";
+            const state = readRequiredJson(stateFile);
+            const decisions = Array.isArray(state.decisions) ? state.decisions : [];
+
+            if (!Number.isInteger(number) || number < 1 || number > decisions.length || !lessonText) {
+                console.log("");
+                console.log("JARVIS DECISION LESSON");
+                console.log("----------------------");
+                console.log("Use: decision lesson <number> <lesson learned>");
+                return true;
+            }
+
+            const decision = decisions[number - 1];
+
+            if (!decision.outcome) {
+                console.log("");
+                console.log("JARVIS DECISION LESSON BLOCKED");
+                console.log("-------------------------------");
+                console.log("Record the decision outcome before recording a lesson.");
+                console.log("Use: decision outcome <number> <what happened>");
+                return true;
+            }
+
+            if (!Array.isArray(state.lessons)) state.lessons = [];
+
+            const lesson = {
+                id: "lesson-" + (state.lessons.length + 1),
+                date: new Date().toISOString(),
+                source: "decision " + number,
+                decisionId: decision.id || ("decision-" + number),
+                text: lessonText
+            };
+
+            state.lessons.push(lesson);
+            decision.lesson = lessonText;
+            decision.lessonId = lesson.id;
+
+            saveJson(tx, stateFile, state);
+
             console.log("");
-            console.log("JARVIS DECISION LESSON");
-            console.log("----------------------");
-            console.log("Use: decision lesson <number> <lesson learned>");
+            console.log("JARVIS DECISION LESSON RECORDED");
+            console.log("---------------------------------");
+            console.log("Decision: " + (decision.decision || decision.text || "Unknown decision"));
+            console.log("Lesson: " + lessonText);
+            console.log("Lessons recorded: " + state.lessons.length);
+
             return true;
-        }
-
-        const decision = decisions[number - 1];
-
-        if (!decision.outcome) {
-            console.log("");
-            console.log("JARVIS DECISION LESSON BLOCKED");
-            console.log("-------------------------------");
-            console.log("Record the decision outcome before recording a lesson.");
-            console.log("Use: decision outcome <number> <what happened>");
-            return true;
-        }
-
-        if (!Array.isArray(state.lessons)) state.lessons = [];
-
-        const lesson = {
-            id: "lesson-" + (state.lessons.length + 1),
-            date: new Date().toISOString(),
-            source: "decision " + number,
-            decisionId: decision.id || ("decision-" + number),
-            text: lessonText
-        };
-
-        state.lessons.push(lesson);
-        decision.lesson = lessonText;
-        decision.lessonId = lesson.id;
-
-        fs.writeFileSync(stateFile, JSON.stringify(state, null, 2), "utf8");
-
-        console.log("");
-        console.log("JARVIS DECISION LESSON RECORDED");
-        console.log("---------------------------------");
-        console.log("Decision: " + (decision.decision || decision.text || "Unknown decision"));
-        console.log("Lesson: " + lessonText);
-        console.log("Lessons recorded: " + state.lessons.length);
-
-        return true;
+        });
     }
 
     if (lower.startsWith("approve recommendation ")) {
         const rawApproval = trimmed.slice("approve recommendation ".length).trim();
+
+        return withProtectedTransaction(tx => {
         const stateFile = "cofounder-state.json";
-        const state = JSON.parse(fs.readFileSync(stateFile, "utf8"));
+        const state = readRequiredJson(stateFile);
         const decisions = Array.isArray(state.decisions) ? state.decisions : [];
-        const decisionMatch = rawApproval.match(/\s+for decision\s+(\d+)$/i);
-        const approvalText = decisionMatch
-            ? rawApproval.slice(0, decisionMatch.index).trim()
-            : rawApproval;
-        const decisionNumber = decisionMatch ? parseInt(decisionMatch[1], 10) : null;
+
+        // DECISION LINKAGE MUST BE EXPLICIT AND UNAMBIGUOUS.
+        // A quoted action text is stored verbatim and is never truncated; only a trailing
+        // "for decision <number>" OUTSIDE the closing quote is treated as linkage.
+        // Unquoted text keeps the historical trailing-marker behaviour so existing commands
+        // keep working: a trailing "for decision <number>" is always read as linkage.
+        // The parser cannot tell that apart from literal trailing text, so unquoted action
+        // text that must keep the marker literally has to be wrapped in double quotes.
+        let approvalText;
+        let decisionNumber = null;
+
+        if (rawApproval.startsWith('"')) {
+            const closingQuote = rawApproval.indexOf('"', 1);
+
+            if (closingQuote === -1) {
+                console.log("");
+                console.log("JARVIS APPROVAL BLOCKED");
+                console.log("------------------------");
+                console.log("Unbalanced quotes. Close the quoted action text, then optionally add: for decision <number>");
+                return true;
+            }
+
+            approvalText = rawApproval.slice(1, closingQuote);
+            const linkageText = rawApproval.slice(closingQuote + 1).trim();
+
+            if (linkageText) {
+                const quotedLinkMatch = linkageText.match(/^for decision\s+(\d+)$/i);
+
+                if (!quotedLinkMatch) {
+                    console.log("");
+                    console.log("JARVIS APPROVAL BLOCKED");
+                    console.log("------------------------");
+                    console.log("Quoted action text may only be followed by: for decision <number>");
+                    return true;
+                }
+
+                decisionNumber = parseInt(quotedLinkMatch[1], 10);
+            }
+        } else {
+            const decisionMatch = rawApproval.match(/\s+for decision\s+(\d+)$/i);
+            approvalText = decisionMatch
+                ? rawApproval.slice(0, decisionMatch.index).trim()
+                : rawApproval;
+            decisionNumber = decisionMatch ? parseInt(decisionMatch[1], 10) : null;
+        }
 
         if (!approvalText) {
             console.log("");
@@ -3200,7 +3820,7 @@ if (lower === "heartbeat" || lower === "cofounder heartbeat") {
         };
 
         state.approvals.push(approval);
-        fs.writeFileSync(stateFile, JSON.stringify(state, null, 2), "utf8");
+        saveJson(tx, stateFile, state);
 
         console.log("");
         console.log("JARVIS RECOMMENDATION APPROVED");
@@ -3212,13 +3832,16 @@ if (lower === "heartbeat" || lower === "cofounder heartbeat") {
         console.log("No external action executed.");
 
         return true;
+        });
     }
 
     if (lower.startsWith("execute approved ")) {
         const numberText = trimmed.slice("execute approved ".length).trim();
         const number = parseInt(numberText, 10);
+
+        return withProtectedTransaction(tx => {
         const stateFile = "cofounder-state.json";
-        const state = JSON.parse(fs.readFileSync(stateFile, "utf8"));
+        const state = readRequiredJson(stateFile);
         const approvals = Array.isArray(state.approvals) ? state.approvals : [];
 
         if (!Number.isInteger(number) || number < 1 || number > approvals.length) {
@@ -3249,6 +3872,21 @@ if (lower === "heartbeat" || lower === "cofounder heartbeat") {
                 console.log("The approval's linked decision is no longer active.");
                 return true;
             }
+        } else {
+            // An approval recorded before any decision existed carries no link.
+            // Once an active decision exists, execution must not bypass the decision gate.
+            const activeDecisions = Array.isArray(state.decisions)
+                ? state.decisions.filter(d => d.status === "ACTIVE")
+                : [];
+
+            if (activeDecisions.length > 0) {
+                console.log("");
+                console.log("JARVIS EXECUTION BLOCKED");
+                console.log("--------------------------");
+                console.log("This approval is not linked to a decision, and an active decision now exists.");
+                console.log("Record a new approval linked to: for decision <number>");
+                return true;
+            }
         }
 
         if (!Array.isArray(state.executions)) state.executions = [];
@@ -3270,7 +3908,7 @@ if (lower === "heartbeat" || lower === "cofounder heartbeat") {
         approval.executionStatus = execution.status;
         approval.verificationStatus = execution.verificationStatus;
 
-        fs.writeFileSync(stateFile, JSON.stringify(state, null, 2), "utf8");
+        saveJson(tx, stateFile, state);
 
         console.log("");
         console.log("JARVIS EXECUTION RECORDED");
@@ -3282,14 +3920,17 @@ if (lower === "heartbeat" || lower === "cofounder heartbeat") {
         console.log("No external action was performed.");
 
         return true;
+        });
     }
 
     if (lower.startsWith("verify execution ")) {
         const parts = trimmed.split(/\s+/);
         const number = parseInt(parts[2], 10);
         const verificationStatus = (parts[3] || "").toUpperCase();
+
+        return withProtectedTransaction(tx => {
         const stateFile = "cofounder-state.json";
-        const state = JSON.parse(fs.readFileSync(stateFile, "utf8"));
+        const state = readRequiredJson(stateFile);
         const executions = Array.isArray(state.executions) ? state.executions : [];
 
         if (!Number.isInteger(number) || number < 1 || number > executions.length) {
@@ -3335,7 +3976,7 @@ if (lower === "heartbeat" || lower === "cofounder heartbeat") {
             approval.verifiedDate = execution.verifiedDate;
         }
 
-        fs.writeFileSync(stateFile, JSON.stringify(state, null, 2), "utf8");
+        saveJson(tx, stateFile, state);
 
         console.log("");
         console.log("COFOUNDER EXECUTION VERIFIED");
@@ -3348,10 +3989,17 @@ if (lower === "heartbeat" || lower === "cofounder heartbeat") {
         console.log("No external action was performed.");
 
         return true;
+        });
     }
     if (lower === "challenge" || lower === "cofounder challenge" || lower === "challenge recommendation") {
-        const state = JSON.parse(fs.readFileSync("cofounder-state.json", "utf8"));
-        const business = JSON.parse(fs.readFileSync("business.json", "utf8"));
+        const state = readJson("cofounder-state.json", {});
+        const business = readJson("business.json", {
+            prospects: [],
+            opportunities: [],
+            offers: [],
+            followUps: [],
+            revenue: []
+        });
         const prospects = business.prospects || [];
         const openFollowUps = business.followUps.filter(f => f.status === "OPEN");
 
@@ -3406,19 +4054,51 @@ if (lower === "heartbeat" || lower === "cofounder heartbeat") {
     }
 
     if (lower === "recommend" || lower === "cofounder recommend" || lower === "recommend next") {
-        const state = JSON.parse(fs.readFileSync("cofounder-state.json", "utf8"));
-        const business = JSON.parse(fs.readFileSync("business.json", "utf8"));
+        const state = readRequiredJson("cofounder-state.json");
+        const business = readRequiredJson("business.json");
         const activeGoals = state.goals.filter(g => g.status === "ACTIVE");
         const openOpps = business.opportunities.filter(o => o.status === "OPEN");
         const openFollowUps = business.followUps.filter(f => f.status === "OPEN");
         const prospects = business.prospects || [];
+        const openProspects = prospects.filter(p => p.status !== "CLOSED");
+        const selectedName = String(business.selectedProspectName || "").trim();
+        const normalizedSelectedName = selectedName.toLowerCase();
+        const hasOpenNameMatch = Boolean(selectedName) && prospects.some(
+            p => p.status !== "CLOSED" &&
+                String(p.name || "").trim().toLowerCase() === normalizedSelectedName
+        );
+        const hasClosedNameMatch = Boolean(selectedName) && prospects.some(
+            p => p.status === "CLOSED" &&
+                String(p.name || "").trim().toLowerCase() === normalizedSelectedName
+        );
+        const hasIdentityCollision = hasOpenNameMatch && hasClosedNameMatch;
+        const prospectResolution = hasIdentityCollision
+            ? { prospect: null, reason: "identity-collision" }
+            : resolveRecommendationProspect(business);
+        const resolvedProspect = prospectResolution.prospect;
 
         console.log("\nJARVIS COFOUNDER RECOMMENDATION");
         console.log("--------------------------------");
+        showCommercialDirection(state);
         console.log("RECOMMENDATION");
+        console.log("SCOPE: Action guidance only; not portfolio-level commercial direction.");
+
+        if (!resolvedProspect && (openProspects.length > 0 || selectedName)) {
+            console.log("\nPROSPECT SELECTION REQUIRED");
+            console.log("---------------------------");
+            console.log(describeProspectResolution(prospectResolution.reason));
+            console.log("Use: select prospect <exact name>");
+            console.log("No prospect-dependent qualification or opportunity guidance was produced.");
+            console.log("\nAPPROVAL");
+            console.log("No external action taken. Zayn approval is required before execution.");
+            return true;
+        }
 
         const recommendationLessons = Array.isArray(state.lessons) ? state.lessons : [];
-        const incompleteProspects = prospects.filter(p => p.status !== "CLOSED" && (!p.qualification || p.qualification.status !== "QUALIFIED"));
+        const incompleteProspects = resolvedProspect &&
+            (!resolvedProspect.qualification || resolvedProspect.qualification.status !== "QUALIFIED")
+            ? [resolvedProspect]
+            : [];
         const hasQualificationLesson = recommendationLessons.some(lesson => {
             const text = (lesson.text || "").toLowerCase();
             return text.includes("qualify") && text.includes("contract");
@@ -3485,7 +4165,7 @@ if (lower === "heartbeat" || lower === "cofounder heartbeat") {
         }
 
         console.log("\nDECISION CHECK");
-        const decisionState = JSON.parse(fs.readFileSync("cofounder-state.json", "utf8"));
+        const decisionState = readRequiredJson("cofounder-state.json");
         const activeDecisionList = Array.isArray(decisionState.decisions)
             ? decisionState.decisions.filter(d => d.status === "ACTIVE")
             : [];
@@ -3559,83 +4239,101 @@ if (lower === "heartbeat" || lower === "cofounder heartbeat") {
     }
 
     if (input.startsWith("capture discovery ")) {
-    const value = input.slice("capture discovery ".length).trim();
+        const value = input.slice("capture discovery ".length).trim();
 
-    if (!value) {
-        console.log("Please provide the discovery answer.");
-        return;
+        if (!value) {
+            console.log("Please provide the discovery answer.");
+            return;
+        }
+
+        return withProtectedTransaction(tx => {
+            const businessState = readRequiredJson(businessFile);
+            const resolution = resolveFigureProspect(businessState);
+            const active = resolution.prospect;
+
+            console.log("");
+
+            if (!active) {
+                console.log("JARVIS > " + describeProspectResolution(resolution.reason));
+                console.log("JARVIS > Use: select prospect <exact name>");
+                console.log("");
+                return;
+            }
+
+            active.discovery = active.discovery || {};
+            const d = active.discovery;
+
+            let field = active.currentDiscoveryField || "";
+            let label = "";
+
+            const labels = {
+                problem: "Problem",
+                impact: "Impact",
+                currentSolution: "Current solution",
+                desiredOutcome: "Desired outcome",
+                decisionMaker: "Decision maker",
+                budget: "Budget",
+                timeline: "Timeline"
+            };
+
+            if (field) {
+                label = labels[field] || field;
+            } else if (!d.problem) {
+                field = "problem";
+                label = "Problem";
+            } else if (!d.impact) {
+                field = "impact";
+                label = "Impact";
+            } else if (!d.currentSolution) {
+                field = "currentSolution";
+                label = "Current solution";
+            } else if (!d.desiredOutcome) {
+                field = "desiredOutcome";
+                label = "Desired outcome";
+            } else if (!d.decisionMaker) {
+                field = "decisionMaker";
+                label = "Decision maker";
+            } else if (!d.budget) {
+                field = "budget";
+                label = "Budget";
+            } else if (!d.timeline) {
+                field = "timeline";
+                label = "Timeline";
+            }
+            if (!field) {
+                console.log("Discovery evidence is already complete.");
+                console.log("Proceed to qualification and commercial review.");
+                console.log("");
+                return;
+            }
+
+            d[field] = value;
+            active.currentDiscoveryField = "";
+
+            if (active.qualification) {
+                active.qualification = {
+                    status: "NEEDS RECONFIRMATION",
+                    checkedAt: new Date().toISOString(),
+                    missing: [],
+                    note: "Discovery changed after qualification review; rerun qualification and reconfirm buyer evidence."
+                };
+            }
+
+            saveJson(tx, businessFile, businessState);
+            business = businessState;
+
+            console.log("DISCOVERY CAPTURED");
+            console.log("------------------");
+            console.log(label + ": " + value);
+            console.log("");
+            console.log("Next step: run 'next discovery'.");
+            if (active.qualification?.status === "NEEDS RECONFIRMATION") {
+                console.log("Qualification invalidated because discovery changed. Rerun prospect qualification.");
+            }
+            console.log("");
+            return;
+        });
     }
-
-    const business = JSON.parse(fs.readFileSync("business.json", "utf8"));
-    const prospects = business.prospects || [];
-    const active = resolveActiveProspect(business);
-
-    console.log("");
-
-    if (!active) {
-        console.log("No active prospect is currently recorded.");
-        console.log("");
-        return;
-    }
-
-    active.discovery = active.discovery || {};
-    const d = active.discovery;
-
-    let field = active.currentDiscoveryField || "";
-    let label = "";
-
-    const labels = {
-        problem: "Problem",
-        impact: "Impact",
-        currentSolution: "Current solution",
-        desiredOutcome: "Desired outcome",
-        decisionMaker: "Decision maker",
-        budget: "Budget",
-        timeline: "Timeline"
-    };
-
-    if (field) {
-        label = labels[field] || field;
-    } else if (!d.problem) {
-        field = "problem";
-        label = "Problem";
-    } else if (!d.impact) {
-        field = "impact";
-        label = "Impact";
-    } else if (!d.currentSolution) {
-        field = "currentSolution";
-        label = "Current solution";
-    } else if (!d.desiredOutcome) {
-        field = "desiredOutcome";
-        label = "Desired outcome";
-    } else if (!d.decisionMaker) {
-        field = "decisionMaker";
-        label = "Decision maker";
-    } else if (!d.budget) {
-        field = "budget";
-        label = "Budget";
-    } else if (!d.timeline) {
-        field = "timeline";
-        label = "Timeline";
-    }
-    if (!field) {
-        console.log("Discovery evidence is already complete.");
-        console.log("Proceed to qualification and commercial review.");
-        console.log("");
-        return;
-    }
-
-    d[field] = value;
-    fs.writeFileSync("business.json", JSON.stringify(business, null, 2));
-
-    console.log("DISCOVERY CAPTURED");
-    console.log("------------------");
-    console.log(label + ": " + value);
-    console.log("");
-    console.log("Next step: run 'next discovery'.");
-    console.log("");
-    return;
-}
 if (input.startsWith("discovery impact ")) {
     const value = input.slice("discovery impact ".length).trim();
 
@@ -3644,41 +4342,61 @@ if (input.startsWith("discovery impact ")) {
         return;
     }
 
-    const business = JSON.parse(fs.readFileSync("business.json", "utf8"));
-    const prospects = business.prospects || [];
-    const active = resolveActiveProspect(business);
+    return withProtectedTransaction(tx => {
+        const businessState = readRequiredJson(businessFile);
+        const resolution = resolveFigureProspect(businessState);
+        const active = resolution.prospect;
 
-    if (!active) {
-        console.log("No active prospect is currently recorded.");
+        if (!active) {
+            console.log("JARVIS > " + describeProspectResolution(resolution.reason));
+            console.log("JARVIS > Use: select prospect <exact name>");
+            return;
+        }
+
+        active.discovery = active.discovery || {};
+        active.discovery.impact = value;
+
+        if (active.qualification) {
+            active.qualification = {
+                status: "NEEDS RECONFIRMATION",
+                checkedAt: new Date().toISOString(),
+                missing: [],
+                note: "Discovery changed after qualification review; rerun qualification and reconfirm buyer evidence."
+            };
+        }
+
+        saveJson(tx, businessFile, businessState);
+        business = businessState;
+
+        console.log("");
+        console.log("DISCOVERY CAPTURED");
+        console.log("------------------");
+        console.log("Impact: " + value);
+        console.log("");
+        console.log("Next step: run 'next discovery'.");
+        if (active.qualification?.status === "NEEDS RECONFIRMATION") {
+            console.log("Qualification invalidated because discovery changed. Rerun prospect qualification.");
+        }
+        console.log("");
         return;
-    }
-
-    active.discovery = active.discovery || {};
-    active.discovery.impact = value;
-
-    fs.writeFileSync("business.json", JSON.stringify(business, null, 2));
-
-    console.log("");
-    console.log("DISCOVERY CAPTURED");
-    console.log("------------------");
-    console.log("Impact: " + value);
-    console.log("");
-    console.log("Next step: run 'next discovery'.");
-    console.log("");
-    return;
+    });
 }
 if (input === "next discovery" || input === "discovery question") {
-    const business = JSON.parse(fs.readFileSync("business.json", "utf8"));
-    const prospects = business.prospects || [];
-    const active = resolveActiveProspect(business);
+    return withProtectedTransaction(tx => {
+        const businessState = readRequiredJson(businessFile);
+        const resolution = resolveFigureProspect(businessState);
+        const active = resolution.prospect;
 
-    console.log("");
-    console.log("NEXT DISCOVERY QUESTION");
-    console.log("-----------------------");
+        if (!active) {
+            console.log("JARVIS > " + describeProspectResolution(resolution.reason));
+            console.log("JARVIS > Use: select prospect <exact name>");
+            return;
+        }
 
-    if (!active) {
-        console.log("No active prospect is currently recorded.");
-    } else {
+        console.log("");
+        console.log("NEXT DISCOVERY QUESTION");
+        console.log("-----------------------");
+
         const d = active.discovery || {};
 
         if (!d.problem) {
@@ -3705,14 +4423,16 @@ if (input === "next discovery" || input === "discovery question") {
         } else {
             console.log("Discovery evidence is complete. Proceed to qualification and commercial review.");
         }
-    }
 
-    fs.writeFileSync("business.json", JSON.stringify(business, null, 2));
-    console.log("");
-    return;
+        saveJson(tx, businessFile, businessState);
+        business = businessState;
+        console.log("");
+        return;
+    });
 }
 if (input === "run cycle" || input === "cycle") {
-    const businessState = JSON.parse(fs.readFileSync("business.json", "utf8"));
+    return withProtectedTransaction(tx => {
+    const businessState = readRequiredJson(businessFile);
     const activeProspects = (businessState.prospects || []).filter(p => p.status !== "CLOSED");
 
     console.log("");
@@ -3726,8 +4446,15 @@ if (input === "run cycle" || input === "cycle") {
         return;
     }
 
-    const prospect = resolveActiveProspect(businessState);
-    if (!prospect) return;
+    const prospectResolution = resolveFigureProspect(businessState);
+    const prospect = prospectResolution.prospect;
+
+    if (!prospect) {
+        console.log("JARVIS > " + describeProspectResolution(prospectResolution.reason));
+        console.log("JARVIS > Use: select prospect <exact name>");
+        return;
+    }
+
     const d = prospect.discovery || {};
     const required = [
         ["problem", d.problem],
@@ -3759,6 +4486,12 @@ if (input === "run cycle" || input === "cycle") {
         qualification.confirmationSource === "ZAYN_CONFIRMED_BUYER_EVIDENCE" &&
         Boolean(qualification.confirmedAt);
 
+    // The commercial-review path needs cofounder-state.json. Read and validate
+    // it before the branch that may persist a qualification update.
+    const cofounderState = buyerConfirmationRecorded
+        ? readRequiredJson("cofounder-state.json")
+        : null;
+
     if (!buyerConfirmationRecorded) {
         console.log("STAGE: QUALIFICATION");
         console.log("--------------------");
@@ -3771,7 +4504,8 @@ if (input === "run cycle" || input === "cycle") {
                 missing: [],
                 note: "Core discovery fields are present; buyer confirmation is still required."
             };
-            saveJson("business.json", businessState);
+            saveJson(tx, businessFile, businessState);
+            business = businessState;
         }
 
         console.log("Qualification: READY FOR CONFIRMATION");
@@ -3809,9 +4543,12 @@ if (input === "run cycle" || input === "cycle") {
         console.log("Commercial unknowns: none");
     }
 
+    console.log("COMMERCIAL FIGURES");
+    console.log("------------------");
+    buildCommercialFigureLines(d).lines.forEach(line => console.log(line));
+
     console.log("");
 
-    const cofounderState = JSON.parse(fs.readFileSync("cofounder-state.json", "utf8"));
     const activeApprovals = Array.isArray(cofounderState.approvals)
         ? cofounderState.approvals.filter(a => a.status === "ACTIVE")
         : [];
@@ -3856,8 +4593,13 @@ if (input === "run cycle" || input === "cycle") {
     console.log("External action: BLOCKED");
     console.log("");
     return;
+    });
 }
 if (input === "commercial assessment") { commercialAssessment(); return; }
+if (lower === "commercial figures" || lower.startsWith("commercial figures ")) {
+    commercialFigures(trimmed.slice("commercial figures".length).trim());
+    return;
+}
 if (input === "commercial brain" || input === "commercial") { commercialBrain.analyze(); return; }
 
   // MEMORY
@@ -4016,126 +4758,148 @@ if (input === "commercial brain" || input === "commercial") { commercialBrain.an
             return true;
         }
 
-        const activeProspects = business.prospects.filter(
-            (item) => item.status !== "CLOSED"
-        );
+        return withProtectedTransaction(tx => {
+            const businessState = readBusinessForMutation();
+            const activeProspects = businessState.prospects.filter(
+                (item) => item.status !== "CLOSED"
+            );
 
-        if (activeProspects.length === 0) {
-            console.log("JARVIS > No active prospect found.");
-            return true;
-        }
+            if (activeProspects.length === 0) {
+                console.log("JARVIS > No active prospect found.");
+                return true;
+            }
 
-        const prospect = resolveActiveProspect(business);
-        if (!prospect) return true;
+            const resolution = resolveFigureProspect(businessState);
+            const prospect = resolution.prospect;
 
-        if (!prospect.discovery) {
-            prospect.discovery = {
-                problem: "",
-                impact: "",
-                currentSolution: "",
-                desiredOutcome: "",
-                decisionMaker: "",
-                budget: "",
-                timeline: "",
-                notes: ""
+            if (!prospect) {
+                console.log("JARVIS > " + describeProspectResolution(resolution.reason));
+                console.log("JARVIS > Use: select prospect <exact name>");
+                return true;
+            }
+
+            if (!prospect.discovery) {
+                prospect.discovery = {
+                    problem: "",
+                    impact: "",
+                    currentSolution: "",
+                    desiredOutcome: "",
+                    decisionMaker: "",
+                    budget: "",
+                    timeline: "",
+                    notes: ""
+                };
+            }
+
+            const fieldMap = {
+                problem: "problem",
+                impact: "impact",
+                current: "currentSolution",
+                solution: "currentSolution",
+                outcome: "desiredOutcome",
+                decision: "decisionMaker",
+                maker: "decisionMaker",
+                budget: "budget",
+                timeline: "timeline",
+                price: "price",
+                cost: "cost",
+                notes: "notes"
             };
-        }
 
-        const fieldMap = {
-            problem: "problem",
-            impact: "impact",
-            current: "currentSolution",
-            solution: "currentSolution",
-            outcome: "desiredOutcome",
-            decision: "decisionMaker",
-            maker: "decisionMaker",
-            budget: "budget",
-            timeline: "timeline",
-            notes: "notes"
-        };
+            if (!fieldMap[field]) {
+                console.log("JARVIS > Unknown discovery field.");
+                console.log("Use: problem, impact, current, outcome, decision, budget, timeline, price, cost or notes.");
+                return true;
+            }
 
-        if (!fieldMap[field]) {
-            console.log("JARVIS > Unknown discovery field.");
-            console.log("Use: problem, impact, current, outcome, decision, budget, timeline or notes.");
+            prospect.discovery[fieldMap[field]] = value;
+
+            if (prospect.qualification) {
+                prospect.qualification = {
+                    status: "NEEDS RECONFIRMATION",
+                    checkedAt: new Date().toISOString(),
+                    missing: [],
+                    note: "Discovery changed after qualification review; rerun qualification and reconfirm buyer evidence."
+                };
+            }
+
+            saveJson(tx, businessFile, businessState);
+            business = businessState;
+
+            console.log(`JARVIS > Discovery saved: ${fieldMap[field]}`);
+            if (prospect.qualification?.status === "NEEDS RECONFIRMATION") {
+                console.log("Qualification invalidated because discovery changed. Rerun prospect qualification.");
+            }
             return true;
-        }
-
-        prospect.discovery[fieldMap[field]] = value;
-
-        if (prospect.qualification) {
-            prospect.qualification = {
-                status: "NEEDS RECONFIRMATION",
-                checkedAt: new Date().toISOString(),
-                missing: [],
-                note: "Discovery changed after qualification review; rerun qualification and reconfirm buyer evidence."
-            };
-        }
-
-        saveJson(businessFile, business);
-
-        console.log(`JARVIS > Discovery saved: ${fieldMap[field]}`);
-        if (prospect.qualification?.status === "NEEDS RECONFIRMATION") {
-            console.log("Qualification invalidated because discovery changed. Rerun prospect qualification.");
-        }
-        return true;
+        });
     }
     if (lower === "confirm prospect qualification" || lower === "confirm qualification") {
-        const activeProspects = business.prospects.filter(
-            (item) => item.status !== "CLOSED"
-        );
+        return withProtectedTransaction(tx => {
+            const businessState = readBusinessForMutation();
+            const activeProspects = businessState.prospects.filter(
+                (item) => item.status !== "CLOSED"
+            );
 
-        if (activeProspects.length === 0) {
-            console.log("\nJARVIS > No active prospect found.");
+            if (activeProspects.length === 0) {
+                console.log("\nJARVIS > No active prospect found.");
+                return true;
+            }
+
+            const resolution = resolveFigureProspect(businessState);
+            const prospect = resolution.prospect;
+
+            if (!prospect) {
+                console.log("JARVIS > " + describeProspectResolution(resolution.reason));
+                console.log("JARVIS > Use: select prospect <exact name>");
+                return true;
+            }
+
+            const d = prospect.discovery || {};
+            const requiredFields = [
+                ["problem", d.problem],
+                ["impact", d.impact],
+                ["current solution", d.currentSolution],
+                ["desired outcome", d.desiredOutcome],
+                ["decision maker", d.decisionMaker]
+            ];
+            const missing = requiredFields
+                .filter((item) => typeof item[1] !== "string" || !item[1].trim())
+                .map((item) => item[0]);
+
+            console.log("\nJARVIS BUYER CONFIRMATION");
+            console.log("------------------------");
+            console.log("Prospect: " + (prospect.name || "Unknown"));
+
+            if (missing.length > 0) {
+                console.log("Confirmation blocked. Missing core discovery fields: " + missing.join(", "));
+                console.log("Run prospect discovery and prospect qualification first.");
+                return true;
+            }
+
+            if (prospect.qualification?.status !== "READY FOR CONFIRMATION") {
+                console.log("Confirmation blocked. Run 'prospect qualification' first and review the recorded fields.");
+                console.log("Only use this command after the buyer has confirmed the recorded information.");
+                return true;
+            }
+
+            const confirmedAt = new Date().toISOString();
+            prospect.qualification = {
+                status: "QUALIFIED",
+                checkedAt: prospect.qualification.checkedAt || confirmedAt,
+                confirmedAt,
+                confirmationSource: "ZAYN_CONFIRMED_BUYER_EVIDENCE",
+                confirmedBy: "Zayn",
+                missing: []
+            };
+            saveJson(tx, businessFile, businessState);
+            business = businessState;
+
+            console.log("QUALIFICATION: QUALIFIED");
+            console.log("Buyer confirmation recorded by Zayn.");
+            console.log("Commercial review may proceed; external actions still require approval.");
+            console.log("Reminder: only record this confirmation after checking the details with the buyer.");
             return true;
-        }
-
-        const prospect = resolveActiveProspect(business);
-        if (!prospect) return true;
-
-        const d = prospect.discovery || {};
-        const requiredFields = [
-            ["problem", d.problem],
-            ["impact", d.impact],
-            ["current solution", d.currentSolution],
-            ["desired outcome", d.desiredOutcome],
-            ["decision maker", d.decisionMaker]
-        ];
-        const missing = requiredFields
-            .filter((item) => typeof item[1] !== "string" || !item[1].trim())
-            .map((item) => item[0]);
-
-        console.log("\nJARVIS BUYER CONFIRMATION");
-        console.log("------------------------");
-        console.log("Prospect: " + (prospect.name || "Unknown"));
-
-        if (missing.length > 0) {
-            console.log("Confirmation blocked. Missing core discovery fields: " + missing.join(", "));
-            console.log("Run prospect discovery and prospect qualification first.");
-            return true;
-        }
-
-        if (prospect.qualification?.status !== "READY FOR CONFIRMATION") {
-            console.log("Confirmation blocked. Run 'prospect qualification' first and review the recorded fields.");
-            console.log("Only use this command after the buyer has confirmed the recorded information.");
-            return true;
-        }
-
-        const confirmedAt = new Date().toISOString();
-        prospect.qualification = {
-            status: "QUALIFIED",
-            checkedAt: prospect.qualification.checkedAt || confirmedAt,
-            confirmedAt,
-            confirmationSource: "ZAYN_CONFIRMED_BUYER_EVIDENCE",
-            confirmedBy: "Zayn",
-            missing: []
-        };
-        saveJson(businessFile, business);
-
-        console.log("QUALIFICATION: QUALIFIED");
-        console.log("Buyer confirmation recorded by Zayn.");
-        console.log("Commercial review may proceed; external actions still require approval.");
-        console.log("Reminder: only record this confirmation after checking the details with the buyer.");
-        return true;
+        });
     }
 
     // STEP 19: PROSPECT QUALIFICATION
@@ -4145,7 +4909,9 @@ if (input === "commercial brain" || input === "commercial") { commercialBrain.an
         lower === "qualify this prospect" ||
         lower === "is this prospect qualified"
     ) {
-        const activeProspects = business.prospects.filter(
+        return withProtectedTransaction(tx => {
+        const businessState = readBusinessForMutation();
+        const activeProspects = businessState.prospects.filter(
             (item) => item.status !== "CLOSED"
         );
 
@@ -4154,8 +4920,14 @@ if (input === "commercial brain" || input === "commercial") { commercialBrain.an
             return true;
         }
 
-        const prospect = resolveActiveProspect(business);
-        if (!prospect) return true;
+        const resolution = resolveFigureProspect(businessState);
+        const prospect = resolution.prospect;
+
+        if (!prospect) {
+            console.log("JARVIS > " + describeProspectResolution(resolution.reason));
+            console.log("JARVIS > Use: select prospect <exact name>");
+            return true;
+        }
 
         if (!prospect.discovery) {
             console.log("\nJARVIS > Discovery has not been started for this prospect.");
@@ -4194,7 +4966,8 @@ if (input === "commercial brain" || input === "commercial") { commercialBrain.an
                     missing: [],
                     note: "Core discovery fields are present; buyer confirmation is still required."
                 };
-                saveJson(businessFile, business);
+                saveJson(tx, businessFile, businessState);
+                business = businessState;
             }
 
             if (buyerConfirmationRecorded) {
@@ -4213,7 +4986,8 @@ if (input === "commercial brain" || input === "commercial") { commercialBrain.an
                 missing
             };
 
-            saveJson(businessFile, business);
+            saveJson(tx, businessFile, businessState);
+            business = businessState;
 
             console.log("\nQUALIFICATION: NEEDS MORE DISCOVERY");
             console.log("Missing information:");
@@ -4222,7 +4996,7 @@ if (input === "commercial brain" || input === "commercial") { commercialBrain.an
             });
         }
 
-        const state = loadJson("cofounder-state.json", {});
+        const state = readJson("cofounder-state.json", {});
     const research = Array.isArray(state.research) ? state.research : [];
     const prospectResearch = research.filter((entry) =>
         entry.prospectName === prospect.name
@@ -4280,6 +5054,7 @@ if (input === "commercial brain" || input === "commercial") { commercialBrain.an
         console.log("Qualification must be based on recorded evidence. Do not invent missing information.");
 
         return true;
+        });
     }
     // STEP 19: PROSPECT RECOMMENDATION
     if (
@@ -4297,8 +5072,27 @@ if (input === "commercial brain" || input === "commercial") { commercialBrain.an
             return true;
         }
 
-        const prospect = resolveActiveProspect(business);
-        if (!prospect) return true;
+        let prospect;
+        const selectedName = String(business.selectedProspectName || "").trim();
+
+        if (selectedName) {
+            const selection = resolveRecommendationProspect(business);
+
+            if (!selection.prospect) {
+                console.log("\nPROSPECT SELECTION REQUIRED");
+                console.log("---------------------------");
+                console.log(describeProspectResolution(selection.reason));
+                console.log("Use: select prospect <exact name>");
+                console.log("No prospect-dependent recommendation was produced.");
+                return true;
+            }
+
+            prospect = selection.prospect;
+        } else {
+            prospect = resolveActiveProspect(business);
+            if (!prospect) return true;
+        }
+
         const d = prospect.discovery || {};
 
         console.log("\nJARVIS PROSPECT RECOMMENDATION");
@@ -4373,7 +5167,7 @@ if (input === "commercial brain" || input === "commercial") { commercialBrain.an
             console.log("No proposal or external action should occur without Zayn's approval.");
         }
 
-        const state = loadJson("cofounder-state.json", {});
+        const state = readJson("cofounder-state.json", {});
     const research = Array.isArray(state.research) ? state.research : [];
     const prospectResearch = research.filter((entry) =>
         entry.prospectName === prospect.name
@@ -4658,6 +5452,11 @@ const multilineBuffer = [];
 let activeResponseLines = null;
 const originalConsoleLog = console.log;
 console.log = (...args) => {
+    if (protectedTransactionOutput) {
+        protectedTransactionOutput.push(args);
+        return;
+    }
+
     originalConsoleLog(...args);
     if (activeResponseLines) {
         activeResponseLines.push(args.map(value =>
@@ -4670,6 +5469,8 @@ async function processCommandLine(line) {
     commandBusy = true;
     const responseLines = [];
     activeResponseLines = responseLines;
+    // Mutating command branches acquire their own writer transaction. Read-only
+    // commands and AI requests do not take the production writer lock.
     try {
         const normalizedCommand = String(line || "").trim().toLowerCase();
         const readOnlyAuditCommands = new Set([
@@ -4685,19 +5486,39 @@ async function processCommandLine(line) {
             await handleCommand(line);
         }
     } catch (error) {
-        console.log("\nCOFOUNDER > Command failed: " + error.message);
+        const message = error && typeof error.message === "string"
+            ? error.message
+            : String(error);
+
+        if (isProtectedTransactionError(error)) {
+            console.log("\nCOFOUNDER > " + message);
+        } else {
+            console.log("\nCOFOUNDER > Command failed: " + message);
+        }
+
+        if (error && error.releaseError) {
+            console.log("\nCOFOUNDER > Writer lock release failed: " + error.releaseError.message);
+        }
     } finally {
         activeResponseLines = null;
         const spokenResponse = responseLines
             .filter(text => !/COFOUNDER > Thinking\.\.\./i.test(text))
             .join(". ");
-        if (spokenResponse.trim() && !shuttingDown) await speakText(spokenResponse);
-        commandBusy = false;
-        if (!rl.closed) rl.prompt();
-
+        // Speak in the background so the prompt is available as soon as the
+        // response is displayed. speakText() serialises playback through
+        // speechQueue, so freeing the prompt cannot cause overlapping speech.
+        if (spokenResponse.trim() && !shuttingDown) {
+            speakText(spokenResponse).catch(() => {});
+        }
+        // Drain queued input before returning to the prompt. Printing the prompt
+        // while a queued command is still pending made the same prompt appear
+        // repeatedly between fragment outputs, so only prompt once the app is idle.
         if (queuedCommands.length > 0) {
             const nextLine = queuedCommands.shift();
             setImmediate(() => processCommandLine(nextLine));
+        } else {
+            commandBusy = false;
+            if (!rl.closed) rl.prompt();
         }
     }
 }
@@ -4758,9 +5579,20 @@ rl.on("line", (line) => {
 
     const isStopCommand = normalized === "stop" || normalized === "cancel" || normalized === "abort";
 
-    // A stop command bypasses the queue only while an AI provider is running.
-    if (isStopCommand && activeAiRequest) {
-        handleCommand(line);
+    // Stop commands are handled locally: they stop speech playback (safe; the
+    // session stays open) and cancel any in-flight AI request. They must never
+    // fall through to the AI provider.
+    if (isStopCommand) {
+        stopSpeech();
+        if (activeAiRequest) {
+            handleCommand(line);
+            return;
+        }
+        if (!commandBusy) {
+            console.log("COFOUNDER > No AI request is currently running.");
+            console.log("COFOUNDER > Speech stopped. Cofounder is still running.");
+            if (!rl.closed) rl.prompt();
+        }
         return;
     }
 
@@ -4779,8 +5611,8 @@ rl.on("line", (line) => {
 
 const commercialBrain = {
     analyze() {
-        const state = JSON.parse(fs.readFileSync("cofounder-state.json", "utf8"));
-        const business = JSON.parse(fs.readFileSync("business.json", "utf8"));
+        const state = readJson("cofounder-state.json", {});
+        const business = readJson("business.json", {});
 
         const prospects = business.prospects || [];
         const opportunities = business.opportunities || [];
@@ -4789,7 +5621,21 @@ const commercialBrain = {
         const openProspects = prospects.filter(p => p.status !== "CLOSED");
         const openOpportunities = opportunities.filter(o => o.status === "OPEN");
         const openFollowUps = followUps.filter(f => f.status === "OPEN");
-        const activeProspect = resolveActiveProspect(business);
+        const selectedName = String(business.selectedProspectName || "").trim();
+        let activeProspect;
+        let selectionFailure = null;
+
+        if (selectedName) {
+            const selection = resolveFigureProspect(business);
+
+            if (!selection.prospect && selection.reason !== "no-open-prospect") {
+                selectionFailure = selection.reason;
+            } else {
+                activeProspect = selection.prospect;
+            }
+        } else {
+            activeProspect = resolveActiveProspect(business);
+        }
 
         console.log("");
         console.log("JARVIS COMMERCIAL BRAIN");
@@ -4827,6 +5673,7 @@ const commercialBrain = {
             console.log("-------------------");
             console.log("Problem: " + (discovery.problem || "Not recorded"));
             console.log("Impact: " + (discovery.impact || "Not recorded"));
+            console.log("Current solution: " + (discovery.currentSolution || "Not recorded"));
             console.log("Desired outcome: " + (discovery.desiredOutcome || "Not recorded"));
             console.log("Decision maker: " + (discovery.decisionMaker || "Not recorded"));
             console.log("Budget: " + (discovery.budget || "Not recorded"));
@@ -4839,6 +5686,7 @@ const commercialBrain = {
 
             if (!discovery.problem) gaps.push("business problem");
             if (!discovery.impact) gaps.push("business impact");
+            if (!discovery.currentSolution) gaps.push("current solution");
             if (!discovery.desiredOutcome) gaps.push("desired outcome");
             if (!discovery.decisionMaker) gaps.push("decision maker");
             if (!discovery.budget) gaps.push("budget");
@@ -4902,6 +5750,15 @@ console.log("");console.log("COMMERCIAL READ");
             console.log(openFollowUps[0].text || "Follow-up recorded without description.");
         }
 
+        if (selectionFailure) {
+            console.log("");
+            console.log("PROSPECT SELECTION REQUIRED");
+            console.log("---------------------------");
+            console.log(describeProspectResolution(selectionFailure));
+            console.log("Use: select prospect <exact name>");
+            return;
+        }
+
         console.log("");
         console.log("");
 console.log("COMMERCIAL NEXT ACTION");
@@ -4920,6 +5777,9 @@ if (activeProspect) {
     } else if (!d.impact) {
             active.currentDiscoveryField = "impact";
         commercialNextAction = "Ask how the problem affects time, cost, revenue, customers or staff capacity.";
+    } else if (!d.currentSolution) {
+            active.currentDiscoveryField = "currentSolution";
+        commercialNextAction = "Confirm how the prospect is handling this problem today.";
     } else if (!d.desiredOutcome) {
             active.currentDiscoveryField = "desiredOutcome";
         commercialNextAction = "Ask what measurable outcome the prospect wants instead.";
@@ -4960,6 +5820,9 @@ if (activeProspect) {
     } else if (!d.impact) {
             active.currentDiscoveryField = "impact";
         discoveryQuestion = "You mentioned that " + d.problem + ". Roughly how much time, cost, customer impact or staff capacity does this issue affect?";
+    } else if (!d.currentSolution) {
+            active.currentDiscoveryField = "currentSolution";
+        discoveryQuestion = "How are you handling this problem today?";
     } else if (!d.desiredOutcome) {
             active.currentDiscoveryField = "desiredOutcome";
         discoveryQuestion = "If we solved that problem, what specific result would you want to see instead?";
@@ -4989,6 +5852,237 @@ console.log("");console.log("COMMERCIAL RULE");
 
 
 
+
+// --------------------------------------------------
+// EVIDENCE-BOUNDED COMMERCIAL FIGURES
+// The deterministic commercial workflow may only state a figure that is
+// traceable to a recorded discovery field (or an explicitly supplied figure).
+// It never invents or extrapolates budget percentages, sample sizes, prospect
+// counts, conversion targets, benchmarks, timelines or kill thresholds. These
+// helpers are deliberately narrow: they compare recorded inputs and otherwise
+// withhold, rather than scanning or interpreting free-form text.
+// --------------------------------------------------
+
+const WITHHELD_FIGURE_ORDER = [
+    "budget percentage",
+    "sample size",
+    "prospect count",
+    "conversion target",
+    "benchmark",
+    "timeline figure",
+    "kill threshold"
+];
+
+const WITHHELD_FIGURE_ALIASES = Object.freeze({
+    "budget percentage": "budget percentage",
+    "budget percent": "budget percentage",
+    "budget allocation": "budget percentage",
+    "sample size": "sample size",
+    "prospect count": "prospect count",
+    "prospect counts": "prospect count",
+    "conversion target": "conversion target",
+    "conversion rate": "conversion target",
+    "benchmark": "benchmark",
+    "timeline": "timeline figure",
+    "timeline figure": "timeline figure",
+    "kill threshold": "kill threshold",
+    "threshold": "kill threshold"
+});
+
+// A withheld request for one of these quantities has a matching recorded
+// discovery fact, when one exists. The fact is reported as a fact; its absence
+// is never assumed.
+const WITHHELD_FIGURE_SOURCE_FIELDS = Object.freeze({
+    "timeline": "timeline",
+    "timeline figure": "timeline",
+    "budget percentage": "budget",
+    "budget percent": "budget",
+    "budget allocation": "budget"
+});
+
+const CURRENCY_TOKENS = [
+    { code: "ZAR", pattern: /^(?:ZAR|R)\s*/i },
+    { code: "USD", pattern: /^(?:USD|\$)\s*/i },
+    { code: "EUR", pattern: /^(?:EUR|€)\s*/i },
+    { code: "GBP", pattern: /^(?:GBP|£)\s*/i }
+];
+
+// Exactly one amount, optionally preceded by a currency symbol or code.
+const SINGLE_AMOUNT_PATTERN = /^(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?$/;
+
+// Reads a single amount from a recorded discovery field. It accepts one
+// unambiguous, non-negative amount optionally prefixed by a currency symbol or
+// code. Ranges, alternatives, rates, units, partial numbers, negative values and
+// malformed digit grouping are rejected instead of being silently truncated to
+// their first number. It never searches a free-form response.
+function parseRecordedFigure(value) {
+    if (typeof value === "number") {
+        return Number.isFinite(value) && value >= 0 ? { amount: value, currency: null } : null;
+    }
+    if (typeof value !== "string") return null;
+
+    let text = value.trim();
+    if (!text) return null;
+
+    let currency = null;
+    for (const token of CURRENCY_TOKENS) {
+        if (token.pattern.test(text)) {
+            currency = token.code;
+            text = text.replace(token.pattern, "");
+            break;
+        }
+    }
+
+    if (!SINGLE_AMOUNT_PATTERN.test(text)) return null;
+
+    const amount = Number(text.replace(/,/g, ""));
+    if (!Number.isFinite(amount) || amount < 0) return null;
+
+    return { amount, currency };
+}
+
+function readRecordedAmount(value) {
+    if (value === null || value === undefined) return { state: "absent" };
+    if (typeof value === "string" && !value.trim()) return { state: "absent" };
+    const parsed = parseRecordedFigure(value);
+    return parsed ? { state: "ok", amount: parsed.amount, currency: parsed.currency } : { state: "unusable" };
+}
+
+// Contribution is only permitted when both recorded inputs are single,
+// unambiguous, non-negative amounts recorded in the same currency.
+function resolveRecordedContribution(discovery = {}) {
+    const price = readRecordedAmount(discovery.price);
+    const cost = readRecordedAmount(discovery.cost);
+    const missing = [];
+
+    if (price.state === "absent") missing.push("price");
+    if (cost.state === "absent") missing.push("cost");
+
+    if (missing.length > 0) {
+        return {
+            status: "EVIDENCE MISSING",
+            contribution: null,
+            currency: null,
+            derivation: null,
+            missing,
+            statement:
+                "Contribution not calculated. Missing recorded evidence: " +
+                missing.join(", ") +
+                ". Record the " + missing.join(" and ") +
+                " before requesting a commercial figure."
+        };
+    }
+
+    const unusable = [];
+    if (price.state === "unusable") unusable.push("price");
+    if (cost.state === "unusable") unusable.push("cost");
+
+    if (unusable.length > 0) {
+        return {
+            status: "EVIDENCE UNUSABLE",
+            contribution: null,
+            currency: null,
+            derivation: null,
+            missing: [],
+            statement:
+                "Contribution not calculated. The recorded " +
+                unusable.join(" and ") +
+                " is not a single unambiguous non-negative amount, so it has been rejected rather than guessed."
+        };
+    }
+
+    if (price.currency === null || cost.currency === null) {
+        return {
+            status: "CURRENCY NOT RECORDED",
+            contribution: null,
+            currency: null,
+            derivation: null,
+            missing: [],
+            statement:
+                "Contribution not calculated. The currency of the recorded price and cost is not recorded, and a currency will not be invented."
+        };
+    }
+
+    if (price.currency !== cost.currency) {
+        return {
+            status: "CURRENCY MISMATCH",
+            contribution: null,
+            currency: null,
+            derivation: null,
+            missing: [],
+            statement:
+                "Contribution not calculated. The recorded price is in " + price.currency +
+                " and the recorded cost is in " + cost.currency +
+                "; a contribution requires one recorded currency."
+        };
+    }
+
+    const currency = price.currency;
+    const contribution = price.amount - cost.amount;
+
+    return {
+        status: "DERIVED FROM RECORDED EVIDENCE",
+        contribution,
+        currency,
+        derivation:
+            "contribution = price - cost = " + price.amount + " - " + cost.amount +
+            " = " + contribution + " " + currency,
+        missing: [],
+        statement: null
+    };
+}
+
+// Fixed deterministic refusal for quantities the evidence cannot establish.
+// A recorded discovery fact is reported as a fact, never claimed to be missing.
+function describeWithheldFigure(category, discovery = {}) {
+    const key = String(category || "").trim().toLowerCase().replace(/\s+/g, " ");
+    const label = WITHHELD_FIGURE_ALIASES[key];
+    if (!label) return null;
+
+    const sourceField = WITHHELD_FIGURE_SOURCE_FIELDS[key];
+    const recorded = sourceField ? discovery[sourceField] : null;
+
+    if (sourceField && recorded) {
+        return (
+            "A recorded " + sourceField + " exists (" + recorded + "), but it is a recorded fact, " +
+            "not a supported recommendation. No " + label + " is stated from it."
+        );
+    }
+
+    return "No " + label + " can be stated from the recorded evidence. Record the supporting evidence first; no figure has been invented.";
+}
+
+// The single, shared figure report used by every deterministic surface.
+function buildCommercialFigureLines(discovery = {}) {
+    const contribution = resolveRecordedContribution(discovery);
+    const lines = [];
+
+    if (contribution.contribution !== null) {
+        lines.push("Contribution: " + contribution.contribution + " " + contribution.currency);
+        lines.push("Derivation: " + contribution.derivation);
+        if (contribution.contribution < 0) {
+            lines.push("Note: the recorded cost exceeds the recorded price, so this contribution is negative.");
+        }
+    } else {
+        lines.push("Contribution: NOT CALCULATED");
+        lines.push("Reason: " + contribution.statement);
+    }
+
+    // Recorded facts are reported as recorded facts, never as recommendations,
+    // and are never treated as absent.
+    if (discovery.timeline) {
+        lines.push("Recorded timeline (a recorded fact, not a recommendation): " + discovery.timeline);
+    }
+    if (discovery.budget) {
+        lines.push("Recorded budget (a recorded fact, not an approved spend): " + discovery.budget);
+    }
+
+    lines.push(
+        "Not stated without supporting evidence (recommendation figures): " + WITHHELD_FIGURE_ORDER.join(", ")
+    );
+
+    return { contribution, lines };
+}
 
 function buildCommercialRecommendation(prospect, offers) {
     const discovery = prospect.discovery || {};
@@ -5024,6 +6118,7 @@ function buildCommercialRecommendation(prospect, offers) {
         alternativeOffer: alternative ? alternative.offer.name : null,
         alternativeOutcome: alternative ? alternative.offer.outcome : null,
         unknowns,
+        contribution: resolveRecordedContribution(discovery),
         approvalRequired: true,
         externalActionAllowed: false
     };
@@ -5144,9 +6239,27 @@ function showActionQueue() {
 
 
 function commercialAssessment() {
-    const business = JSON.parse(fs.readFileSync("business.json", "utf8"));
+    const business = readJson("business.json", {});
     const prospects = Array.isArray(business.prospects) ? business.prospects : [];
-    const prospect = resolveActiveProspect(business);
+    let prospect;
+    const selectedName = String(business.selectedProspectName || "").trim();
+
+    if (selectedName) {
+        const selection = resolveFigureProspect(business);
+
+        if (!selection.prospect && selection.reason !== "no-open-prospect") {
+            console.log("\nPROSPECT SELECTION REQUIRED");
+            console.log("---------------------------");
+            console.log(describeProspectResolution(selection.reason));
+            console.log("Use: select prospect <exact name>");
+            console.log("No prospect-dependent commercial assessment was produced.");
+            return;
+        }
+
+        prospect = selection.prospect;
+    } else {
+        prospect = resolveActiveProspect(business);
+    }
 
     console.log("");
     console.log("JARVIS COMMERCIAL ASSESSMENT");
@@ -5174,6 +6287,7 @@ function commercialAssessment() {
     const hasImpact = Boolean(discovery.impact);
     const hasOutcome = Boolean(discovery.desiredOutcome);
     const hasDecisionMaker = Boolean(discovery.decisionMaker);
+    const hasCurrentSolution = Boolean(discovery.currentSolution);
     const hasBudget = Boolean(discovery.budget);
     const hasTimeline = Boolean(discovery.timeline);
     const hasStrategicFit = Boolean(discovery.strategicFit);
@@ -5181,13 +6295,14 @@ function commercialAssessment() {
     const coreEvidence = [
         hasProblem,
         hasImpact,
+        hasCurrentSolution,
         hasOutcome,
         hasDecisionMaker
     ].filter(Boolean).length;
 
     let evidenceStatus = "INSUFFICIENT";
 
-    if (coreEvidence === 4) {
+    if (coreEvidence === 5) {
         evidenceStatus = "STRONG";
     } else if (coreEvidence >= 2) {
         evidenceStatus = "PARTIAL";
@@ -5254,6 +6369,111 @@ function commercialAssessment() {
     console.log("RISK: " + risk);
     console.log("JUDGEMENT: " + judgement);
     console.log("NEXT ACTION: " + nextAction);
+    console.log("External action: BLOCKED");
+    console.log("");
+}
+
+// DETERMINISTIC NUMERICAL-COMMERCIAL WORKFLOW
+// This is the only place the app answers a request for a commercial figure.
+// It derives a contribution from recorded price and cost, and otherwise returns
+// a fixed statement. It never inspects or rewrites free-form AI answers, and it
+// never writes business state.
+//
+// Prospect selection fails closed. Unlike the dashboard views, a stale saved
+// selection does not silently fall back to the only open prospect, so the
+// command cannot present one prospect's financial data as another's.
+function resolveFigureProspect(businessState) {
+    const prospects = Array.isArray(businessState && businessState.prospects) ? businessState.prospects : [];
+    const open = prospects.filter(item => item.status !== "CLOSED");
+    const selectedName = String((businessState && businessState.selectedProspectName) || "").trim();
+
+    if (selectedName) {
+        const matches = prospects.filter(
+            item => String(item.name || "").trim().toLowerCase() === selectedName.toLowerCase()
+        );
+        if (matches.length > 1) return { prospect: null, reason: "identity-collision" };
+        if (open.length === 0) return { prospect: null, reason: "no-open-prospect" };
+        if (matches.length === 1 && matches[0].status !== "CLOSED") {
+            return { prospect: matches[0], reason: "selected" };
+        }
+        return { prospect: null, reason: "stale-selection" };
+    }
+
+    if (open.length === 0) return { prospect: null, reason: "no-open-prospect" };
+    if (open.length === 1) return { prospect: open[0], reason: "single-open-prospect" };
+    return { prospect: null, reason: "no-selection" };
+}
+
+function resolveRecommendationProspect(businessState) {
+    // Thin call-through only: recommendation selection reuses the strict
+    // selection contract without changing the figure resolver or its callers.
+    return resolveFigureProspect(businessState);
+}
+
+function describeProspectResolution(reason) {
+    switch (reason) {
+        case "no-open-prospect":
+            return "No open prospect is recorded.";
+        case "no-selection":
+            return "More than one open prospect is recorded and none is selected.";
+        case "identity-collision":
+            return "The saved prospect name matches multiple prospect records (identity-collision), so no prospect was selected.";
+        case "ambiguous-selection":
+            return "More than one open prospect shares the saved name, so none was selected.";
+        case "stale-selection":
+            return "The saved prospect selection does not match an open prospect, so none was selected.";
+        default:
+            return "No active prospect could be resolved.";
+    }
+}
+
+function commercialFigures(category) {
+    const businessState = readJson("business.json", {});
+    const resolution = resolveFigureProspect(businessState);
+    const discovery = resolution.prospect ? (resolution.prospect.discovery || {}) : {};
+
+    console.log("");
+    console.log("JARVIS COMMERCIAL FIGURES");
+    console.log("=========================");
+
+    if (category) {
+        const statement = describeWithheldFigure(category, discovery);
+        const key = String(category).trim().toLowerCase().replace(/\s+/g, " ");
+
+        console.log("Figure requested: " + (WITHHELD_FIGURE_ALIASES[key] || category));
+
+        if (!statement) {
+            console.log("Unsupported figure request. No commercial figure was produced.");
+            console.log("Supported quantities: " + WITHHELD_FIGURE_ORDER.join(", "));
+            console.log("External action: BLOCKED");
+            console.log("");
+            return;
+        }
+
+        console.log(statement);
+        console.log("External action: BLOCKED");
+        console.log("");
+        return;
+    }
+
+    if (!resolution.prospect) {
+        console.log("Prospect: none selected");
+        console.log(describeProspectResolution(resolution.reason));
+        console.log("Use: select prospect <exact name>");
+        console.log("Contribution: NOT CALCULATED");
+        console.log("Not stated without supporting evidence (recommendation figures): " + WITHHELD_FIGURE_ORDER.join(", "));
+        console.log("External action: BLOCKED");
+        console.log("");
+        return;
+    }
+
+    const prospect = resolution.prospect;
+    const qualification = prospect.qualification || {};
+
+    console.log("Prospect: " + (prospect.name || "Unknown"));
+    console.log("Qualification: " + (qualification.status || "NOT CHECKED"));
+    buildCommercialFigureLines(discovery).lines.forEach(line => console.log(line));
+    console.log("This is an evidence calculation only. It is not a commercial recommendation and does not replace qualification or Zayn's approval.");
     console.log("External action: BLOCKED");
     console.log("");
 }

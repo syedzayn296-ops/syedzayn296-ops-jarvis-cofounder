@@ -1,12 +1,13 @@
 # Cofounder Project Hub
 
-**Last updated:** 2026-10-15  
+**Last updated:** 2026-10-20  
 **Purpose:** One durable, phone-accessible home for Cofounder status, decisions, research pointers, safeguards, and next actions. This file is the first page to read when resuming work.
 
 - **Repository:** https://github.com/syedzayn296-ops/syedzayn296-ops-jarvis-cofounder
-- **Working branch for the current code line:** `development`
-- **Current remote development head (verified 2026-10-15):** portfolio routing and tests are now committed after `c1fd292`; see the latest branch history. Zayn's manual test confirms live Gemini response, speech output, and immediate speech stop on Ctrl+C. The portfolio regression run was in progress when this page was updated.
-- **Local working copy:** `C:\Users\ZAYZA\JARVIS-Cofounder-Clean`
+- **Working branch for the current code line:** `cofounder-development-sync`
+- **Current head (verified 2026-10-20 00:46:03 +02:00, local working copy):** `074d7f202c0d90f3d1c8986fa7f5fa2b10493100` ("docs: reconcile Cofounder hub with release candidate").
+- **Local working copy:** `C:\Users\ZAYZA\Cofounder-Release-Candidate`
+- **G9 verification:** dated snapshot; see [G9 acceptance clarification](G9-ACCEPTANCE-CLARIFICATION.md).
 - **Operating principle:** Discover first. Qualify second. Recommend third. Execute only after Zayn approves.  
 **Active cleanup task:** [Issue #4 — Reconcile local patch and verify provider routing](https://github.com/syedzayn296-ops/syedzayn296-ops-jarvis-cofounder/issues/4).
 
@@ -57,6 +58,7 @@ Cofounder is Zayzana Tech's AI operating partner, not a yes-man and not an auton
 
 - **Prospect qualification:** discovery being complete is not the same as a buyer confirming qualification. Explicit confirmation and its provenance must be recorded.
 - **Stale qualification:** if core discovery fields change, prior qualification must be invalidated.
+- **Research commands:** the direct research command requires an explicit `research:` delimiter. `research: <query>` runs a direct live search; `research: for <Prospect>: <query>` associates that search with one named open prospect; `research-latest` shows the last saved search; a bare `research` asks for a query. Ordinary messages go to the AI — a natural-language message that merely begins with the word "Research" is never treated as the command, so it cannot trigger an unintended live search or research record.
 - **Research association:** never attach general research automatically to the first open prospect. Use explicit prospect association when needed; reject unmatched or ambiguous names.
 - **Prospect selection:** if several prospects are open, ask for an exact selection rather than guessing. Do not rely on stale selected-prospect state.
 - **Recommendations:** incomplete discovery means no final solution recommendation; state the gap and ask the next useful question.
@@ -81,7 +83,7 @@ git diff --check
 git status --short
 ```
 
-The repository currently contains 51 smoke/regression test cases. GitHub Actions run #25 passed on `c1fd292`. Zayn's latest manual smoke test confirmed a live Gemini answer and immediate speech stop on Ctrl+C. Run the suite again after every code change; automated CI does not prove the local API key or private local data is correct.
+The repository currently contains 104 smoke/regression test cases. GitHub Actions run #25 passed on `c1fd292`. Zayn's latest manual smoke test confirmed a live Gemini answer and immediate speech stop on Ctrl+C. Run the suite again after every code change; automated CI does not prove the local API key or private local data is correct.
 
 ## 6. Commercial research and pipeline
 
