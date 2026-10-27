@@ -4158,7 +4158,7 @@ test('commercial figures fails closed on missing, ambiguous or stale prospect se
     'commercial figures\n'
   );
   assert.equal(duplicate.result.status, 0);
-  assert.match(duplicate.result.stdout ?? '', /More than one open prospect shares the saved name/);
+  assert.match(duplicate.result.stdout ?? '', /matches multiple prospect records \(identity-collision\)/);
   assert.doesNotMatch(duplicate.result.stdout ?? '', /contribution = price - cost/);
 
   const selected = runIsolatedJarvis(
@@ -5342,7 +5342,7 @@ test('recommend fails closed on duplicate open prospect names matching the saved
 
   assert.equal(result.status, 0);
   assert.match(stdout, /PROSPECT SELECTION REQUIRED/);
-  assert.match(stdout, /More than one open prospect shares the saved name, so none was selected\./);
+  assert.match(stdout, /matches multiple prospect records \(identity-collision\), so no prospect was selected\./);
   assert.match(stdout, /Use: select prospect <exact name>/);
   assert.doesNotMatch(stdout, /Focus first on:/);
   assert.doesNotMatch(stdout, /Focus on converting the open opportunity/);
