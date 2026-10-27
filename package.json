@@ -4,7 +4,7 @@
   "description": "Zayzana Tech local AI cofounder and commercial decision partner",
   "main": "index.js",
   "scripts": {
-    "test": "node --test test/jarvis-smoke.test.js"
+    "test": "node --test test/jarvis-smoke.test.js test/state-durability.test.js test/state-store-exclusive-create.test.js test/state-store-transaction.test.js"
   },
   "keywords": [],
   "author": "Zayn & Cofounder",
