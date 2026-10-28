@@ -5599,3 +5599,28 @@ test('portfolio judgement views preserve first-record opportunity precedence', (
     assert.doesNotMatch(stdout, /PROSPECT SELECTION REQUIRED|Select a prospect/, command);
   }
 });
+
+test('state-file mutation hygiene: adding a prospect refuses malformed business.json and preserves the original bytes', () => {
+  const malformedBusiness = '{ invalid json';
+  const run = runIsolatedJarvis(
+    prospectFixture(),
+    'add prospect Regression Prospect\\n',
+    {},
+    { invalidBusinessData: true }
+  );
+
+  assert.equal(run.result.status, 0, 'stdout: ' + run.result.stdout + '\\nstderr: ' + run.result.stderr);
+  assert.doesNotMatch(run.result.stdout ?? '', /Prospect added: Regression Prospect/);
+  assert.equal(
+    run.protectedFiles['business.json'],
+    malformedBusiness,
+    'a mutation must not replace malformed business state with an in-memory fallback'
+  );
+  assert.equal(
+    run.directoryListing.some(name => /^business\\.json\\..*\\.bak$/.test(name)),
+    false,
+    'a refused mutation must not create a business backup'
+  );
+  assert.equal(run.directoryListing.includes('.cofounder-state.lock'), false, 'the writer lock must be released');
+});
+
