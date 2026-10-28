@@ -4,7 +4,7 @@ on:
   pull_request:
     branches: [development]
   push:
-    branches: [development, cofounder-readiness-cleanup, cofounder-development-sync]
+    branches: [development, cofounder-readiness-cleanup, cofounder-development-sync, ci-run-state-tests]
 
 jobs:
   test:
