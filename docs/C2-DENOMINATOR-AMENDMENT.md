@@ -1,15 +1,14 @@
 # C2 — Denominator Amendment (Recorded)
 
-**Status:** RECORDED — WRITTEN TO THE REPOSITORY WORKING TREE, NOT YET COMMITTED.
+**Status:** RECORDED — COMMITTED AND DELIVERED TO `origin/cofounder-development-sync`.
 
 The **substance** of this amendment was approved by Zayn on 2026-10-29 as a three-part
 decision: (a) the denominator substitution in §3; (b) the binding clarification in §4; and
 (c) the incomplete-run interpretation in §5.
 
 Zayn then gave separate explicit approval to **record** the amendment by creating this file.
-Authorisation to record is therefore **GRANTED**, and this file has been written to the
-repository working tree. It is **not yet committed**, so nothing below is in force in the
-repository's history until that commit is made.
+Authorisation to record is therefore **GRANTED**, and this file has been committed and pushed to
+the remote branch recorded in §10. Delivery details and verification are recorded there.
 
 This record does not record C2 as passed, and does not claim that any part of C2's
 offline-safety requirement has been demonstrated.
@@ -144,7 +143,7 @@ parenthetical — is preserved verbatim.
 | Scope of substance approval | (a) the wording substitution in §3; (b) the binding clarification in §4; (c) the incomplete-run interpretation in §5 |
 | Authorised at that time | Preparation of this record only |
 | Authorisation to **record** this file | **GRANTED** — separate explicit approval given for creation of `docs/C2-DENOMINATOR-AMENDMENT.md` |
-| Recording (commit) status | File written to the working tree on branch `cofounder-development-sync`; committed and pushed separately (see §10) |
+| Recording (commit) status | **Committed and pushed.** Recorded by `c51ce39`, delivered to `origin/cofounder-development-sync` via merge `f2b1a1a`; verified remote head equals `f2b1a1a` (see §10) |
 | Deferred by the same decision | "Before/with P1" anchor; static-evidence parenthetical; E1 guard limitations |
 
 ## 10. Delivery record
@@ -153,5 +152,15 @@ parenthetical — is preserved verbatim.
 |---|---|
 | File | `docs/C2-DENOMINATOR-AMENDMENT.md` |
 | Branch | `cofounder-development-sync` |
-| Commit | <<to be filled from the commit that records this file>> |
-| Push | <<to be filled only if a push is separately verified>> |
+| Amendment commit | `c51ce3963164968f2add5531f049edb84c393d33` — `docs: record approved C2 denominator amendment` (local-only commit that introduced this file) |
+| Remote commit preserved by merge | `b003a3639ff2f610af1076c6f9e8ba7a7fb77e40` — `docs(hub): reconcile status with verified 28 October evidence` (pre-existing remote Hub update, carried through unchanged) |
+| Merge commit | `f2b1a1a6577c588bc794ce53f7f191ff57d1db10` — `Merge remote-tracking branch 'origin/cofounder-development-sync' into cofounder-development-sync` |
+| Remote / branch | `origin` → `https://github.com/syedzayn296-ops/syedzayn296-ops-jarvis-cofounder.git`, branch `cofounder-development-sync` |
+| Push | Delivered non-forced (`b003a36..f2b1a1a`), then **verified against the remote branch reference**: `git ls-remote --heads origin cofounder-development-sync` returned head `f2b1a1a6577c588bc794ce53f7f191ff57d1db10`, matching the local merge commit; a re-fetch of `origin/cofounder-development-sync` returned the same hash; ahead/behind `0 / 0` |
+| Ancestry verified | `c51ce39` and `b003a36` are both ancestors of remote head `f2b1a1a` |
+| Working tree after delivery | Clean |
+
+Verification note: this record is itself the file whose delivery it describes. It is delivered
+by the merge commit above; any later edit to this document — including this delivery record —
+requires its own commit, and the hashes above describe the delivery of the amendment, not of
+subsequent edits.
