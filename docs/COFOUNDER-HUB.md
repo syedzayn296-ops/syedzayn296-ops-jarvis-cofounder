@@ -1,36 +1,88 @@
 # Cofounder Project Hub
 
-**Last updated:** 2026-10-28
-**Purpose:** One durable, phone-accessible home for Cofounder status, decisions, research pointers, safeguards, and next actions. This file is the first page to read when resuming work.
+**Status reviewed:** 2026-10-28 23:43 +02:00  
+**Purpose:** Provide one reliable starting point for understanding Cofounder’s current state, evidence, outstanding work, safeguards and next authorised action.
 
-- **Repository:** https://github.com/syedzayn296-ops/syedzayn296-ops-jarvis-cofounder
-- **Working branch for the current code line:** `cofounder-development-sync`
-- **Current head (verified 2026-10-28 23:17:16 +02:00, local working copy):** `05de9665ceeaa0e3fa544308cc63d73d2fdb0362` ("docs: clarify G9 dated HEAD verification").
-- **Local working copy:** `C:\Users\ZAYZA\Cofounder-Release-Candidate`
-- **G9 verification:** dated snapshot; see [G9 acceptance clarification](G9-ACCEPTANCE-CLARIFICATION.md).
-- **Operating principle:** Discover first. Qualify second. Recommend third. Execute only after Zayn approves.  
+**Repository:** [syedzayn296-ops/syedzayn296-ops-jarvis-cofounder](https://github.com/syedzayn296-ops/syedzayn296-ops-jarvis-cofounder)
+
+**Working branch:** `cofounder-development-sync`  
+**Observed HEAD at review time:** `eb338f1e88f61cdf533d0f3dbc378f76aa6dcc02`  
+**Local working copy:** `C:\Users\ZAYZA\Cofounder-Release-Candidate` — its current state is not established by remote GitHub evidence alone.  
+**Operating principle:** Discover first. Qualify second. Recommend third. Execute only after Zayn approves.  
 **Active cleanup task:** [Issue #4 — Reconcile local patch and verify provider routing](https://github.com/syedzayn296-ops/syedzayn296-ops-jarvis-cofounder/issues/4).
 
 ## 1. Current state — read this first
 
-### Confirmed
-- The local working copy was previously based on remote commit `e445f0d`.
-- Remote `development` now contains the provider-routing changes in commit `997e69a`; the branch is 9 commits ahead of `e445f0d` and not behind it.
-- The latest GitHub Actions run for `development`, run #25 on commit `c1fd292`, completed successfully on 2026-10-15: [run #25](https://github.com/syedzayn296-ops/syedzayn296-ops-jarvis-cofounder/actions/runs/38665364762).
-- A previous local syntax check and test suite passed **50/50 tests** on 2026-10-14; that historical local result is not proof that the current local checkout matches remote `development`.
-- A patch backup was created at `Desktop\COFOUNDER-LOCAL-CHANGES.patch`; a separate audit report was created at `Desktop\COFOUNDER-AUDIT.txt`.
-- Antigravity CLI exists at `%LOCALAPPDATA%\agy\bin\agy.exe`; its help output confirms support for `--sandbox`, `--output-format text`, and `--print`.
-- OmniRoute's script exists at `%APPDATA%\npm\node_modules\omniroute\bin\omniroute.mjs`.
-- A real Antigravity request returned HTTP 429 / `RESOURCE_EXHAUSTED`: individual quota exhausted. Do not keep retrying it or buy an upgrade just to unblock development.
-- A prior test in the older `JARVIS\jarvis.js` app successfully returned `Gemini connection works` using the Gemini API and model override `gemini-3.5-flash-lite`. **That does not mean direct Gemini is already integrated into this clean repository.**
-- `cofounder-settings.json` currently reports `speechEnabled: true`. Keep local settings and secrets out of Git.
+### Verified remote repository state
 
-### Not yet confirmed
-- Whether the local PC checkout has pulled the latest remote `development` head `c1fd292`.
-- Local private business-state quality/counts cannot be verified from GitHub; run the planned read-only local audit before trusting counts or freshness.
-- Speech output and Ctrl+C interruption were manually verified by Zayn on 2026-10-15. Speech input is not implemented/verified in the inspected code.
-- Whether local Ollama is installed, running, and has the configured model available.
-- The local archive/backup files remain safety copies; never stage them wholesale.
+The following branch heads were observed on GitHub during the 28 October 2026 status review. They are remote references, not proof of the current local PC checkout.
+
+| Branch | Observed HEAD |
+|---|---|
+| `main` | `fc20bffeec33efcc81910a01896b939c74cf44af` |
+| `development` | `008ee78b9f8cf5e9cd1baf34ee19677b54220136` |
+| `cofounder-development-sync` | `eb338f1e88f61cdf533d0f3dbc378f76aa6dcc02` |
+| `ci-run-state-tests` | `a9c73031715a14022bef59c08e005cb490c8a157` |
+
+### Release-gate progress
+
+**P1 — G6 and G9: COMPLETE, based on the evidence recorded below.** This does not establish full release readiness.
+
+- **G6 — push-trigger verification:** [GitHub Actions run 40767397839](https://github.com/syedzayn296-ops/syedzayn296-ops-jarvis-cofounder/actions/runs/40767397839) passed on `ci-run-state-tests` at `a9c73031715a14022bef59c08e005cb490c8a157` (235/235 tests).
+- **G9 — dated verification snapshot:** [Commit `eb338f1`](https://github.com/syedzayn296-ops/syedzayn296-ops-jarvis-cofounder/commit/eb338f1e88f61cdf533d0f3dbc378f76aa6dcc02) records the G9 documentation update on `cofounder-development-sync`.
+- **G9 workflow verification:** [GitHub Actions run 40770933991](https://github.com/syedzayn296-ops/syedzayn296-ops-jarvis-cofounder/actions/runs/40770933991) passed the configured smoke/regression checks on `eb338f1` (162/162 tests).
+
+A dated G9 snapshot is historical evidence of what was observed at that time. A later commit advancing the branch does not invalidate the dated snapshot.
+
+### Current CI evidence
+
+| Branch / run | Result | Coverage |
+|---|---|---|
+| `development`, [run 40758839155](https://github.com/syedzayn296-ops/syedzayn296-ops-jarvis-cofounder/actions/runs/40758839155), SHA `008ee78` | 236 passed, 0 failed | Smoke/regression plus three state-store/durability suites |
+| `cofounder-development-sync`, [run 40770933991](https://github.com/syedzayn296-ops/syedzayn296-ops-jarvis-cofounder/actions/runs/40770933991), SHA `eb338f1` | 162 passed, 0 failed | Smoke/regression suite only |
+
+The workflows do not run identical test sets. Their results must not be represented as equivalent coverage. The `ci-run-state-tests` push-trigger verification is branch-specific; it does not by itself establish that the same trigger configuration exists on `cofounder-development-sync`.
+
+### Known resolved CI failure
+
+Three earlier `development` runs failed this test:
+
+`state-file mutation hygiene: adding a prospect refuses malformed business.json and preserves the original bytes`
+
+The failure concerned a success-style message being emitted when malformed business state should have prevented a safe mutation. Commit `008ee78` introduced fail-closed behaviour, and the later development run passed the test.
+
+This is evidence that the previously failing test now passes. It is not proof that every possible mutation path has been exhaustively verified.
+
+### Review boundaries that remain in force
+
+- [PR #15 — Reconcile Cofounder release candidate and development into main](https://github.com/syedzayn296-ops/syedzayn296-ops-jarvis-cofounder/pull/15) must remain **open, draft and unmerged**.
+- [Issue #4 — Reconcile local patch and verify provider routing](https://github.com/syedzayn296-ops/syedzayn296-ops-jarvis-cofounder/issues/4) remains open pending a separately evidenced resolution.
+- Preserve the legacy `jarvis.js` prototype on `main` until its intended future is explicitly decided.
+- Remote GitHub evidence does not establish the current state of the local PC checkout, local backups, private business data or configured credentials.
+- P1 completion does not establish full release readiness. Other gates and release decisions remain separate.
+
+### Outstanding and unverified items
+
+- Reconcile older status notes as historical where appropriate; do not silently erase durable operating rules or safeguards.
+- **Unverified:** local branch/HEAD, uncommitted changes and backup status; live local provider routing with configured credentials; private local business-data integrity/freshness; and the final disposition of `jarvis.js`.
+- **Unverified:** whether all release gates beyond P1 have been satisfied.
+
+### Next authorised action
+
+Reconcile this hub’s current-state documentation with verified remote evidence while preserving the existing sections 2–10. This pass is documentation-only: no code, test, workflow, configuration or protected-data changes; no merge, branch deletion, PR #15 change, Issue #4 closure, or release-gate change.
+
+### Evidence and change discipline
+
+Classify each status claim as:
+
+- **Verified:** directly supported by the evidence cited.
+- **Historical:** supported by evidence from an earlier observation.
+- **Unverified:** not yet established.
+- **Decision required:** awaiting Zayn’s explicit direction.
+
+A successful test is evidence for the test and code path it actually exercised. It is not automatic approval of a release, merge, deployment or unrelated functionality.
+
+End each work session by recording the current verified state, outstanding questions, evidence gathered and next authorised action.
 
 ## 2. AI provider situation and intended behaviour
 
