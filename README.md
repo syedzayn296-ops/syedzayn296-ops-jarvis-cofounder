@@ -2,6 +2,10 @@
 
 JARVIS is an AI operating partner being developed for Zayzana Tech.
 
+## Start here
+
+**[Cofounder Project Hub](docs/COFOUNDER-HUB.md)** — current status, decisions, research pointers, safety rules, branch guidance, and next actions. Update it at the end of every meaningful work session so progress is available from any device.
+
 ## Current capabilities
 
 - Company and business context
@@ -21,9 +25,7 @@ Observe → Assess → Challenge → Recommend → Decide → Approve → Execut
 
 ## Development status
 
-The current build is a local Node.js prototype developed on the Acer development machine.
-
-Live OpenAI API work is intentionally parked until billing/credits are available.
+The current build is a local Node.js prototype being developed on the Dell machine. See the [Cofounder Project Hub](docs/COFOUNDER-HUB.md) for the verified status of local changes, provider availability, tests, and sync state.
 
 ## Safety
 

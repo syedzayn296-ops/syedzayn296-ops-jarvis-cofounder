@@ -1,13 +1,13 @@
 {
-  "name": "jarvis",
+  "name": "zayzana-cofounder",
   "version": "1.0.0",
-  "description": "",
+  "description": "Zayzana Tech local AI cofounder and commercial decision partner",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "node --test test/jarvis-smoke.test.js test/state-durability.test.js test/state-store-exclusive-create.test.js test/state-store-transaction.test.js"
   },
   "keywords": [],
-  "author": "",
+  "author": "Zayn & Cofounder",
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
