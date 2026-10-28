@@ -918,10 +918,15 @@ let business = (() => {
 })();
 
 function readBusinessForMutation() {
-    const current = readJson(businessFile, null);
-    const source = current && typeof current === "object" && !Array.isArray(current)
-        ? current
-        : cloneJson(business);
+    // A mutation must use the on-disk record as its source of truth. Never
+    // replace missing, malformed, or structurally invalid state with an
+    // in-memory fallback and then persist that fallback over the original.
+    const current = readRequiredJson(businessFile);
+    if (!current || typeof current !== "object" || Array.isArray(current)) {
+        throw new Error(`Local state file "${businessFile}" must contain a JSON object. It was left unchanged.`);
+    }
+
+    const source = current;
 
     for (const key of ["prospects", "opportunities", "offers", "followUps", "revenue"]) {
         if (!Array.isArray(source[key])) source[key] = [];
